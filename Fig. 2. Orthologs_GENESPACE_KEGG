@@ -1,0 +1,1129 @@
+#########################
+#Fig. 2a plot -donuts and curve
+#########################
+
+#load to new file
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# Load the orthogroups data
+file_path = "orthogroups.tsv"  # Update this with the actual path to your file
+data = pd.read_csv(file_path, sep='\t', index_col=0)
+
+# Count the presence of each gene family in the individuals
+gene_counts = data.apply(lambda row: row.count(), axis=1)
+####################################################################################
+# Classify the gene families -mrtom can guide
+###################################################################################
+total_gene_families = len(gene_counts)
+core_genes = gene_counts[gene_counts >= 49].count()
+soft_core_genes = gene_counts[(gene_counts >= 47) & (gene_counts < 49)].count()
+dispensable_genes = gene_counts[(gene_counts >= 7) & (gene_counts < 47)].count()
+#private_genes = gene_counts[gene_counts == 1].count()
+private_genes = gene_counts[(gene_counts >= 1) & (gene_counts < 7)].count()
+
+# Calculate percentages
+core_genes_percentage = (core_genes / total_gene_families) * 100
+soft_core_genes_percentage = (soft_core_genes / total_gene_families) * 100
+dispensable_genes_percentage = (dispensable_genes / total_gene_families) * 100
+private_genes_percentage = (private_genes / total_gene_families) * 100
+
+# Prepare data for the pie chart
+labels = ['Core genes', 'Soft core genes', 'Dispensable genes', 'Private genes']
+sizes = [core_genes_percentage, soft_core_genes_percentage, dispensable_genes_percentage, private_genes_percentage]
+colors = ['#4daf4a', '#377eb8', '#ff7f00', '#e41a1c']  # Different color scheme
+
+# Create a pie chart
+fig, ax = plt.subplots(figsize=(10, 8), dpi=300)
+wedges, texts, autotexts = ax.pie(sizes, colors=colors, autopct='%1.1f%%', startangle=140,
+                                  textprops={'fontsize': 14, 'fontweight': 'bold'})
+
+# Draw a circle at the center of pie to make it look like a donut
+centre_circle = plt.Circle((0,0),0.70,fc='white')
+fig.gca().add_artist(centre_circle)
+
+# Equal aspect ratio ensures that pie is drawn as a circle.
+ax.axis('equal')
+
+# Add a legend inside the pie chart
+ax.legend(wedges, labels, title="Gene Categories", loc="center", bbox_to_anchor=(0.5, 0.5), fontsize=12, title_fontsize='13', frameon=False)
+
+# Save the pie chart as high resolution PNG and PDF
+plt.tight_layout()
+plt.savefig('gene_families_pie_chart.png', format='png', dpi=300)
+plt.savefig('gene_families_pie_chart.pdf', format='pdf')
+
+# Display the plot
+plt.show()
+
+#########
+import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
+
+# Load the orthogroups data
+file_path = "orthogroups.tsv"  # Update this with the actual path to your file
+data = pd.read_csv(file_path, sep='\t', index_col=0)
+
+# Function to classify gene families
+def classify_genes(data, total_individuals):
+    core_genes = []
+    pan_genome = []
+
+    for i in range(1, total_individuals + 1):
+        subset = data.iloc[:, :i]
+        gene_counts = subset.apply(lambda x: x.count(), axis=1)
+        
+        core = (gene_counts == i).sum()
+        pan = (gene_counts > 0).sum()
+        
+        core_genes.append(core)
+        pan_genome.append(pan)
+    
+    return core_genes, pan_genome
+
+# Total number of individuals
+total_individuals = data.shape[1]
+
+# Classify genes
+core_genes, pan_genome = classify_genes(data, total_individuals)
+
+# Prepare x-axis data
+individuals = np.arange(1, total_individuals + 1)
+
+# Plot cumulative curves
+plt.figure(figsize=(8, 6))
+
+plt.plot(individuals, core_genes, label='Core genome', color='#4daf4a', linewidth=2)
+plt.plot(individuals, pan_genome, label='Pan-genome', color='#e41a1c', linewidth=2)
+
+plt.xlabel('Number of Individuals', fontsize=14, fontweight='bold')
+plt.ylabel('Number of Gene Families', fontsize=14, fontweight='bold')
+plt.title('Cumulative Curves for Gene Families', fontsize=16, fontweight='bold')
+plt.legend(title="", fontsize=12, title_fontsize='13', loc='right', frameon=False, bbox_to_anchor=(0.4, 0.5), prop={'weight': 'bold'})
+plt.grid(False)
+
+# Make tick labels bold
+plt.xticks(fontsize=12, fontweight='bold')
+plt.yticks(fontsize=12, fontweight='bold')
+
+# Save the plot as high resolution PNG and PDF
+plt.tight_layout()
+plt.savefig('gene_families_cumulative_curves.png', format='png', dpi=300)
+plt.savefig('gene_families_cumulative_curves.pdf', format='pdf')
+
+# Display the plot
+plt.show()
+
+##########################################################
+# Fig. 2b Collectors curve with a 95% confidence interval
+###########################################################
+import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
+
+# Load the orthogroups data
+file_path = "orthogroups.tsv"  # Update this with the actual path to your file
+data = pd.read_csv(file_path, sep='\t', index_col=0)
+
+# Function to classify gene families with bootstrapping for confidence intervals
+def classify_genes_with_ci(data, total_individuals, num_bootstraps=100):
+    core_genes_bootstrap = []
+    pan_genome_bootstrap = []
+    
+    for _ in range(num_bootstraps):
+        sampled_data = data.sample(frac=1, replace=True, axis=1)  # Resample columns (individuals)
+        core_genes = []
+        pan_genome = []
+        
+        for i in range(1, total_individuals + 1):
+            subset = sampled_data.iloc[:, :i]
+            gene_counts = subset.apply(lambda x: x.count(), axis=1)
+            
+            core = (gene_counts == i).sum()
+            pan = (gene_counts > 0).sum()
+            
+            core_genes.append(core)
+            pan_genome.append(pan)
+        
+        core_genes_bootstrap.append(core_genes)
+        pan_genome_bootstrap.append(pan_genome)
+
+    # Convert to numpy arrays for easy computation
+    core_genes_bootstrap = np.array(core_genes_bootstrap)
+    pan_genome_bootstrap = np.array(pan_genome_bootstrap)
+    
+    # Compute mean and 95% confidence intervals
+    core_mean = core_genes_bootstrap.mean(axis=0)
+    core_ci_low = np.percentile(core_genes_bootstrap, 2.5, axis=0)
+    core_ci_high = np.percentile(core_genes_bootstrap, 97.5, axis=0)
+    
+    pan_mean = pan_genome_bootstrap.mean(axis=0)
+    pan_ci_low = np.percentile(pan_genome_bootstrap, 2.5, axis=0)
+    pan_ci_high = np.percentile(pan_genome_bootstrap, 97.5, axis=0)
+
+    return core_mean, core_ci_low, core_ci_high, pan_mean, pan_ci_low, pan_ci_high
+
+# Total number of individuals
+total_individuals = data.shape[1]
+
+# Get mean and confidence intervals
+core_mean, core_ci_low, core_ci_high, pan_mean, pan_ci_low, pan_ci_high = classify_genes_with_ci(data, total_individuals)
+
+# Prepare x-axis data
+individuals = np.arange(1, total_individuals + 1)
+
+# Plot cumulative curves with confidence intervals
+plt.figure(figsize=(8, 6))
+
+# Core genome plot
+plt.plot(individuals, core_mean, label='Core genome', color='#4daf4a', linewidth=2)
+plt.fill_between(individuals, core_ci_low, core_ci_high, color='#4daf4a', alpha=0.3)
+
+# Pan-genome plot
+plt.plot(individuals, pan_mean, label='Pan-genome', color='#e41a1c', linewidth=2)
+plt.fill_between(individuals, pan_ci_low, pan_ci_high, color='#e41a1c', alpha=0.3)
+
+# Labels and formatting
+plt.xlabel('Number of Individuals', fontsize=14, fontweight='bold')
+plt.ylabel('Number of Gene Families', fontsize=14, fontweight='bold')
+plt.title('Cumulative Curves for Gene Families with Confidence Intervals', fontsize=16, fontweight='bold')
+plt.legend(title="", fontsize=12, title_fontsize='13', loc='right', frameon=False, bbox_to_anchor=(0.4, 0.5), prop={'weight': 'bold'})
+plt.grid(False)
+
+# Make tick labels bold
+plt.xticks(fontsize=12, fontweight='bold')
+plt.yticks(fontsize=12, fontweight='bold')
+
+# Save the plot as high resolution PNG and PDF
+plt.tight_layout()
+plt.savefig('gene_families_cumulative_curves_CI.png', format='png', dpi=300)
+plt.savefig('gene_families_cumulative_curves_CI.pdf', format='pdf')
+
+# Display the plot
+plt.show()
+##########################################################
+# Fig. 2c Power law
+###########################################################
+#Power law
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from scipy.optimize import curve_fit
+from scipy.stats import linregress
+
+# Load orthogroups
+df = pd.read_csv("Orthogroups.tsv", sep="\t", index_col=0)
+
+# Number of genomes and iterations
+genomes = df.columns.tolist()
+num_genomes = len(genomes)
+iterations = 100
+
+# Store new gene family counts per genome added
+novel_counts_matrix = np.zeros((iterations, num_genomes))
+
+for i in range(iterations):
+    permuted = np.random.permutation(genomes)
+    seen_families = set()
+    
+    for j in range(num_genomes):
+        current_genome = permuted[j]
+        current_families = df[df[current_genome].notna()].index
+        novel = len(set(current_families) - seen_families)
+        novel_counts_matrix[i, j] = novel
+        seen_families.update(current_families)
+
+# Mean number of novel genes added at each N
+mean_novel = novel_counts_matrix.mean(axis=0)
+N = np.arange(1, num_genomes + 1)
+
+# Fit power law: n = k * N^(-a)
+def power_law(N, k, a):
+    return k * N ** (-a)
+
+popt, _ = curve_fit(power_law, N, mean_novel, p0=[10000, 1.0])
+k_fit, a_fit = popt
+
+# Compute pseudo R²
+residuals = mean_novel - power_law(N, *popt)
+ss_res = np.sum(residuals**2)
+ss_tot = np.sum((mean_novel - np.mean(mean_novel))**2)
+r_squared = 1 - (ss_res / ss_tot)
+
+# Plot
+plt.figure(figsize=(8, 6))
+plt.scatter(N, mean_novel, label='Observed Novel Gene Families', color='darkorange')
+plt.plot(N, power_law(N, *popt), label=f'Power Law Fit: n={k_fit:.0f}·N^(-{a_fit:.2f}), R²={r_squared:.3f}', color='black', linewidth=2)
+plt.xlabel('Number of Genomes (N)', fontsize=14, fontweight='bold')
+plt.ylabel('New Gene Families (n)', fontsize=14, fontweight='bold')
+plt.title('Gene Family Accumulation Curve', fontsize=16, fontweight='bold')
+plt.xticks(fontsize=12, fontweight='bold')
+plt.yticks(fontsize=12, fontweight='bold')
+plt.legend()
+plt.tight_layout()
+plt.savefig('novel_gene_family_powerlaw.png', dpi=300)
+plt.savefig('novel_gene_family_powerlaw.pdf')
+plt.show()
+
+# Print parameters
+print(f"Fitted parameters: k = {k_fit:.2f}, a = {a_fit:.2f}, R² = {r_squared:.3f}")
+
+###################################
+#Fig. 2d BTX623 vs pangenome
+####################################
+#Category	BTX623 bar includes	Pangenome bar includes
+#Core	Orthogroups found in all 49 genomes (incl. BTX623)	Same as BTX623
+#Soft Core	Orthogroups shared among 47–48 genomes including BTX623	Orthogroups shared among 47–48 genomes (BTX623 can be included)
+#Dispensable	Orthogroups shared among 7–46 genomes including BTX623	Orthogroups shared among 7–46 genomes (BTX623 can be included)
+#Private	Orthogroups where only BTX623 has a gene	Orthogroups where BTX623 is absent, but at least one other genome has it
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# Load orthogroups
+df = pd.read_csv("Orthogroups.tsv", sep="\t", index_col=0)
+
+# Define genome lists
+all_genomes = list(df.columns)
+btx623 = "BTX623"
+pangenome_genomes = [g for g in all_genomes if g != btx623]
+
+# ---- STEP 1: Count genome presence per orthogroup ----
+og_presence_counts = df.notna().sum(axis=1)
+
+# ---- STEP 2: Core = present in all 49 genomes ----
+core_ogs = og_presence_counts[og_presence_counts >= 49]
+core_count = len(core_ogs)
+
+# ---- STEP 3: Soft Core and Dispensable (include BTX623) ----
+soft_core_ogs = og_presence_counts[(og_presence_counts >= 47) & (og_presence_counts < 49)]
+dispensable_ogs = og_presence_counts[(og_presence_counts >= 7) & (og_presence_counts < 47)]
+
+# ---- STEP 4: BTX623-specific private OGs ----
+btx623_private_ogs = df[
+    (df[btx623].notna()) &
+    (df[pangenome_genomes].isna().all(axis=1))
+]
+btx623_private_count = btx623_private_ogs.shape[0]
+print(f"BTX623 private orthogroups: {btx623_private_count}")
+
+# ---- STEP 5: Pangenome-exclusive private OGs (absent in BTX623) ----
+pangenome_private_ogs = df[
+    (df[btx623].isna()) &
+    (df[pangenome_genomes].notna().any(axis=1))
+]
+pangenome_private_count = pangenome_private_ogs.shape[0]
+print(f"Pangenome-exclusive private orthogroups: {pangenome_private_count}")
+
+# ---- Save private OGs ----
+pangenome_private_ogs.to_csv("pangenome_private_orthogroups.tsv", sep="\t")
+
+# ---- Save ranking: genomes contributing most to private OGs ----
+pangenome_private_contribution = pangenome_private_ogs[pangenome_genomes].notna().sum(axis=0)
+pangenome_private_contribution = pangenome_private_contribution.sort_values(ascending=False)
+pangenome_private_contribution.to_csv("pangenome_private_og_contributors.tsv", sep="\t", header=["Private_OG_Contribution"])
+
+# ---- STEP 6: Soft core and dispensable breakdown ----
+btx623_soft_core_count = df.loc[soft_core_ogs.index][btx623].notna().sum()
+btx623_dispensable_count = df.loc[dispensable_ogs.index][btx623].notna().sum()
+pangenome_soft_core_count = len(soft_core_ogs)
+pangenome_dispensable_count = len(dispensable_ogs)
+
+# ---- STEP 7: Build plot data ----
+labels = ["BTX623", "Pangenome"]
+core_vals = [core_count, core_count]
+soft_vals = [btx623_soft_core_count, pangenome_soft_core_count]
+disp_vals = [btx623_dispensable_count, pangenome_dispensable_count]
+priv_vals = [btx623_private_count, pangenome_private_count]
+
+# ---- STEP 8: Plot ----
+fig, ax = plt.subplots(figsize=(9, 6))
+ax.bar(labels, core_vals, label="Core", color="blue")
+ax.bar(labels, soft_vals, bottom=core_vals, label="Soft Core", color="lightblue")
+ax.bar(labels, disp_vals, bottom=[i + j for i, j in zip(core_vals, soft_vals)], label="Dispensable", color="orange")
+ax.bar(labels, priv_vals, bottom=[i + j + k for i, j, k in zip(core_vals, soft_vals, disp_vals)], label="Private", color="red")
+
+# ---- STEP 9: Annotate bar segments ----
+for i, (core, soft, disp, priv) in enumerate(zip(core_vals, soft_vals, disp_vals, priv_vals)):
+    y_offset = 0
+    for val, color in zip([core, soft, disp, priv], ['blue', 'lightblue', 'orange', 'red']):
+        if val > 0:
+            ax.text(i, y_offset + val / 2, str(val), ha='center', va='center',
+                    color='white', fontsize=9, weight='bold')
+            y_offset += val
+
+# ---- Final touches ----
+ax.set_ylabel("Orthogroup Count")
+ax.set_title("Orthogroup Categories: BTX623 vs Pangenome (49 Genomes)")
+ax.legend()
+plt.tight_layout()
+plt.savefig("orthogroup_categories_BTX623_vs_pangenome.png", dpi=300)
+plt.savefig("orthogroup_categories_BTX623_vs_pangenome.pdf")  # Save as PDF
+plt.show()
+
+###################################
+#Fig. 2e HEATMAP
+####################################
+import json
+import os
+import pandas as pd
+import numpy as np
+from Bio import Phylo
+import matplotlib
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+ALLOWED_RESULT_TYPES = ['gene-list', 'count', 'boolean']
+
+def get_apply_fn(result_type: str):
+    if result_type == 'gene-list':
+        apply_fn = lambda x: [] if pd.isnull(x) else x.split(', ')
+    elif result_type == 'count':
+        apply_fn = lambda x: 0 if pd.isnull(x) else x.count(', ') + 1
+    elif result_type == 'boolean':
+        apply_fn = lambda x: not pd.isnull(x)
+    else:
+        raise AssertionError(f'Failed to understand result_type={result_type}. Must be one of {ALLOWED_RESULT_TYPES}.')
+    return apply_fn
+
+def load_og(og_tsv: str, result_type: str = 'gene-list'):
+    og_tsv = os.path.abspath(os.path.expanduser(og_tsv))
+    assert os.path.isfile(og_tsv), f'og_tsv does not exist: "{og_tsv}"'
+
+    apply_fn = get_apply_fn(result_type)
+
+    # read "Orthogroups.tsv"
+    gene_ids_df = pd.read_csv(og_tsv, sep='\t', dtype=str)
+
+    # sanity checks
+    assert 'Orthogroup' in gene_ids_df.columns, \
+        f'The file {og_tsv} does not appear to be a valid Orthogroup.tsv: ' \
+        f'The column "Orthogroup" is missing. Try setting --hog=False'
+
+    gene_ids_df.set_index('Orthogroup', inplace=True)
+
+    gene_ids_df = gene_ids_df.applymap(apply_fn)
+
+    return gene_ids_df
+
+def load_hog(hog_tsv: str, result_type: str = 'gene-list'):
+    hog_tsv = os.path.abspath(os.path.expanduser(hog_tsv))
+    assert os.path.isfile(hog_tsv), f'hog_tsv does not exist: "{hog_tsv}"'
+
+    apply_fn = get_apply_fn(result_type)
+
+    # read "N0.tsv" and drop extra columns
+    gene_ids_df = pd.read_csv(hog_tsv, sep='\t', dtype=str)
+
+    # sanity checks
+    for col in ['HOG', 'OG', 'Gene Tree Parent Clade']:
+        assert col in gene_ids_df.columns, f'The file {hog_tsv} does not appear to be a valid N0.tsv: ' \
+                                           f'The column "{col}" is missing. Try setting --hog=False'
+
+    gene_ids_df.set_index('HOG', inplace=True)
+
+    gene_ids_df.drop(columns=['OG', 'Gene Tree Parent Clade'], inplace=True)
+
+    gene_ids_df = gene_ids_df.applymap(apply_fn)
+
+    return gene_ids_df
+
+def import_tree(path_to_newick):
+    assert os.path.isfile(path_to_newick)
+    return Phylo.read(path_to_newick, 'newick')
+
+def create_plots(tree, orthogroups_tsv, out, format='svg', no_labels=False, hog=False):
+    """
+    Create plots analogous to roary_plots for OrthoFinder OG/HOG
+
+    :param tree: newick tree as string or path to file
+    :param orthogroups_tsv: path to Orthogroups.tsv or N0.tsv
+    :param out: path to output directory
+    :param format: desired image format
+    :param no_labels: Hide labels on phylogenetic tree
+    :param hog: if True: expect hierarchical orthogroup file (e.g.N0.tsv), if False: expect Orthogroups.tsv
+    """
+    out = os.path.abspath(os.path.expanduser(out))
+    os.makedirs(out, exist_ok=True)
+    assert format in ['png', 'tiff', 'pdf', 'svg']
+
+    if type(tree) == str:
+        tree = os.path.abspath(tree)
+        tree = import_tree(tree)
+    assert type(tree) == Phylo.Newick.Tree
+
+    if type(orthogroups_tsv) is str:
+        if hog:
+            orthogroups_tsv = load_hog(orthogroups_tsv, result_type='boolean')
+        else:
+            orthogroups_tsv = load_og(orthogroups_tsv, result_type='boolean')
+    assert type(orthogroups_tsv) == pd.DataFrame
+
+    matplotlib.use('Agg')
+    sns.set_style('white')
+
+    # Max distance to create better plots
+    mdist = max([tree.distance(tree.root, x) for x in tree.get_terminals()])
+
+    # Sort the matrix by the sum of genomes presence
+    og_count = orthogroups_tsv.sum(axis=1)
+    idx = og_count.sort_values(ascending=False).index
+    orthofinder_sorted = orthogroups_tsv.loc[idx]
+
+    ## Plot pangenome frequency
+    plt.figure(figsize=(7, 5))
+
+    n_orthogenes, n_genomes = orthogroups_tsv.shape
+
+    plt.hist(
+        x=og_count,
+        bins=n_genomes,
+        histtype="stepfilled",
+        alpha=.7
+    )
+
+    plt.xlabel('No. of genomes')
+    plt.ylabel('No. of genes')
+
+    sns.despine(left=True, bottom=True)
+
+    for fmt in ['svg', 'png', 'pdf']:
+        save_path = os.path.join(out, f'pangenome_frequency.{fmt}')
+        plt.savefig(save_path, dpi=300)
+    plt.clf()
+
+    # Sort the matrix according to tip labels in the tree
+    tree_tip_labels = tree.get_terminals()
+    orthofinder_sorted = orthofinder_sorted[[x.name for x in tree_tip_labels]]
+
+    ## Plot presence/absence matrix against the tree
+    with sns.axes_style('whitegrid'):
+        fig = plt.figure(figsize=(17, 10))
+
+        # Adjusted for more space to the left and reduced distance to heatmap
+        ax1 = plt.subplot2grid((1, 50), (0, 20), colspan=30)
+        a = ax1.matshow(
+            Z=orthofinder_sorted.T,
+            cmap='viridis',  # Changed colormap to viridis
+            vmin=0, vmax=1,
+            aspect='auto',
+            interpolation='none',
+        )
+        ax1.set_yticks([])
+        ax1.set_xticks([])
+
+        cbar = plt.colorbar(a, ax=ax1, orientation='vertical', fraction=0.02, pad=0.01)
+        cbar.set_label('Presence/Absence')
+        cbar.ax.tick_params(labelsize=8)
+
+        # Adjusting the subplot for the tree to ensure alignment and minimal gap
+        ax = fig.add_subplot(1, 2, 1, aspect='equal')
+        fig.subplots_adjust(wspace=0.01, hspace=0)  # Minimal space between tree and heatmap
+
+        ax1.set_title('OrthoFinder v2.5.4 \n(%d gene clusters)' % n_orthogenes)
+
+        def draw_tree(xlim, label_func):
+            Phylo.draw(
+                tree=tree, axes=ax,
+                show_confidence=False,
+                label_func=label_func,
+                xticks=([],), yticks=([],),
+                ylabel=('',), xlabel=('',),
+                xlim=xlim,
+                axis=('off',),
+                title=('Tree\n(%d genomes)' % n_genomes,),
+                do_show=False,
+            )
+
+        if no_labels:
+            draw_tree(
+                xlim=(-mdist * 0.01, mdist),  # Adjusted xlim for better alignment
+                label_func=lambda x: None
+            )
+        else:
+            fsize = 12 - 0.1 * n_genomes
+            if fsize < 7:
+                fsize = 7
+            with plt.rc_context({'font.size': fsize}):
+                draw_tree(
+                    xlim=(-mdist * 0.06, mdist),  # Adjusted xlim for better alignment
+                    label_func=lambda x: x.name  # Ensure full labels are displayed
+                )
+
+        for fmt in ['svg', 'png', 'pdf']:
+            save_path = os.path.join(out, f'pangenome_matrix.{fmt}')
+            plt.savefig(save_path, dpi=300)
+        plt.clf()
+
+    ## Plot the pangenome pie chart
+    plt.figure(figsize=(10, 10))
+
+    CORE, SOFT, SHELL = (n_genomes * f for f in [.99, .95, .15])
+
+    core = ((og_count >= CORE) & (og_count <= n_genomes)).sum()
+    softcore = ((og_count >= SOFT) & (og_count < CORE)).sum()
+    shell = ((og_count >= SHELL) & (og_count < SOFT)).sum()
+    cloud = (og_count < SHELL).sum()
+
+    def my_autopct(pct):
+        val = int(round(pct * n_orthogenes / 100.0))
+        return '{v:d}'.format(v=val)
+
+    pie_data = dict(zip(['core', 'softcore', 'shell', 'cloud'], [int(i) for i in (core, softcore, shell, cloud)]))
+    print('Pie data:', json.dumps(pie_data))
+
+    CORE, SOFT, SHELL = (int(i) for i in [CORE, SOFT, SHELL])
+    wedges, texts, autotexts = plt.pie(
+        x=[core, softcore, shell, cloud],
+        labels=[f'core\n({CORE} <= genomes <= {n_genomes})',
+                f'soft-core\n({SOFT} <= genomes < {CORE})',
+                f'shell\n({SHELL} <= genomes < {SOFT})',
+                f'cloud\n(genomes < {SHELL})'],
+        explode=[.1, .05, .02, 0], radius=.9,
+        colors=sns.color_palette("Set3"),
+        autopct=my_autopct
+    )
+
+    for text in texts + autotexts:
+        text.set_fontsize(10)
+
+    plt.tight_layout()
+
+    for fmt in ['svg', 'png', 'pdf']:
+        save_path = os.path.join(out, f'pangenome_pie.{fmt}')
+        plt.savefig(save_path, dpi=300)
+    plt.clf()
+
+def main():
+    # Load files directly
+    tree_file = 'SpeciesTree_rooted.txt'
+    orthogroups_file = 'Orthogroups.tsv'
+    
+    # Define output directory and format
+    out = './output'
+    
+    # Create plots
+    create_plots(tree_file, orthogroups_file, out, format='svg', no_labels=False, hog=False)
+
+if __name__ == '__main__':
+    main()
+
+#Pie data: {"core": 22018, "softcore": 3810, "shell": 6196, "cloud": 5380}
+
+##########################################################
+# Fig. 2f Genespace
+###########################################################
+#/data1/jkitony/Sorghum/genespace/fiftygenomes
+
+##############
+#!/bin/bash
+# Define base S3 URL
+base_url="s3://salk-tm-dev/Sbic/pangenome_2024/assemblies"
+# List of sample directories to download from
+samples=(
+    "Wild_PI156549_HAP1"
+    "Wild_PI156549_HAP2"
+    "BTX623"
+    "RTx430"
+    "ExPVP_PI543243"
+    "ExPVP_PI543246"
+    "ExPVP_PI543247"
+    "ExPVP_PI544069"
+    "ExPVP_PI554646"
+    "ExPVP_PI554647"
+    "ExPVP_PI554648"
+    "ExPVP_PI554649"
+    "ExPVP_PI554650"
+    "ExPVP_PI554652"
+    "ExPVP_PI554654"
+    "ExPVP_PI555457"
+    "ExPVP_PI561926"
+    "ExPVP_PI562621"
+    "ExPVP_PI562622"
+    "ExPVP_PI562623"
+    "ExPVP_PI562624"
+    "ExPVP_PI562625"
+    "ExPVP_PI564085"
+    "ExPVP_PI574398"
+    "ExPVP_PI574406"
+    "ExPVP_PI574407"
+    "ExPVP_PI594354"
+    "ExPVP_PI594355"
+    "ExPVP_PI595221"
+    "ExPVP_PI596332"
+    "ExPVP_PI596567"
+    "ExPVP_PI601264"
+    "ExPVP_PI601415"
+    "ExPVP_PI601552"
+    "ExPVP_PI601553"
+    "ExPVP_PI601554"
+    "ExPVP_PI601555"
+    "ExPVP_PI601556"
+    "ExPVP_PI601557"
+    "ExPVP_PI601716"
+    "ExPVP_PI601717"
+    "ExPVP_PI601718"
+    "ExPVP_PI601719"
+    "ExPVP_PI601720"
+    "ExPVP_PI601721"
+    "ExPVP_PI601743"
+    "ExPVP_PI601744"
+    "ExPVP_PI601756"
+    "ExPVP_PI602599"
+    "ExPVP_PI602600"   
+)
+
+# Loop through samples and download
+for sample in "${samples[@]}"; do
+    # Find the appropriate version (a01, a02, etc.) dynamically
+    version=$(aws s3 ls "$base_url/$sample/annotations/" | grep "munged" | awk -F'.' '{print $2}' | head -n1)
+
+    if [[ -n "$version" ]]; then
+        aws s3 cp "$base_url/$sample/annotations/$sample.$version.munged/$sample.$version.softmasked.proteins.fasta.gz" .
+        
+        # Rename file
+        mv "$sample.$version.softmasked.proteins.fasta.gz" "$sample.fasta.gz"
+    else
+        echo "Warning: No version found for $sample, skipping..."
+    fi
+done
+
+echo "Download and renaming complete."
+
+
+######################
+#!/bin/bash
+
+# Create an output directory
+mkdir -p peptide
+
+# Loop through all FASTA files in the folder
+for file in *.fasta.gz; do
+    # Define output filename
+    output="peptide/${file%.fasta.gz}.fasta.gz"
+
+    # Process each file
+    gunzip -c "$file" | awk '
+    BEGIN { keep=0 }  # Initialize keep flag to 0
+    /^>/ {
+        keep=0;  # Reset keep flag for each new header
+        sub(/\.a[0-9]+/, "", $0);  # Remove .a01, .a02, etc.
+        sub(/_RagTag/, "", $0);    # Remove _RagTag if present
+        if ($0 ~ /Chr/) {
+            if (!(seen[$0]++)) {  # Print only if the header is not seen before
+                print $0;
+                keep=1;
+            }
+        }
+    }
+    !/^>/ && keep { print }  # Print sequence lines only if keep flag is set
+    ' | gzip > "$output"
+
+    echo "Processed: $file -> $output"
+done
+
+echo "Standardization completed. Filtered files saved in 'peptide' directory."
+
+################
+#!/bin/bash
+
+# Define base S3 URL
+base_url="s3://salk-tm-dev/Sbic/pangenome_2024/assemblies"
+
+# List of sample directories to download from
+samples=(
+    "Wild_PI156549_HAP1"
+    "Wild_PI156549_HAP2"
+    "BTX623"
+    "RTx430"
+    "ExPVP_PI543243"
+    "ExPVP_PI543246"
+    "ExPVP_PI543247"
+    "ExPVP_PI544069"
+    "ExPVP_PI554646"
+    "ExPVP_PI554647"
+    "ExPVP_PI554648"
+    "ExPVP_PI554649"
+    "ExPVP_PI554650"
+    "ExPVP_PI554652"
+    "ExPVP_PI554654"
+    "ExPVP_PI555457"
+    "ExPVP_PI561926"
+    "ExPVP_PI562621"
+    "ExPVP_PI562622"
+    "ExPVP_PI562623"
+    "ExPVP_PI562624"
+    "ExPVP_PI562625"
+    "ExPVP_PI564085"
+    "ExPVP_PI574398"
+    "ExPVP_PI574406"
+    "ExPVP_PI574407"
+    "ExPVP_PI594354"
+    "ExPVP_PI594355"
+    "ExPVP_PI595221"
+    "ExPVP_PI596332"
+    "ExPVP_PI596567"
+    "ExPVP_PI601264"
+    "ExPVP_PI601415"
+    "ExPVP_PI601552"
+    "ExPVP_PI601553"
+    "ExPVP_PI601554"
+    "ExPVP_PI601555"
+    "ExPVP_PI601556"
+    "ExPVP_PI601557"
+    "ExPVP_PI601716"
+    "ExPVP_PI601717"
+    "ExPVP_PI601718"
+    "ExPVP_PI601719"
+    "ExPVP_PI601720"
+    "ExPVP_PI601721"
+    "ExPVP_PI601743"
+    "ExPVP_PI601744"
+    "ExPVP_PI601756"
+    "ExPVP_PI602599"
+    "ExPVP_PI602600"   
+)
+# Loop through samples and download GFF3 files
+for sample in "${samples[@]}"; do
+    # Find the appropriate version (a01, a02, etc.) dynamically
+    version=$(aws s3 ls "$base_url/$sample/annotations/" | grep "munged" | awk -F'.' '{print $2}' | head -n1)
+
+    if [[ -n "$version" ]]; then
+        aws s3 cp "$base_url/$sample/annotations/$sample.$version.munged/$sample.$version.softmasked.gff3.gz" .
+        
+        # Rename file
+        mv "$sample.$version.softmasked.gff3.gz" "$sample.gff3.gz"
+    else
+        echo "Warning: No version found for $sample, skipping..."
+    fi
+done
+
+echo "Download and renaming complete."
+
+######################
+#!/bin/bash
+
+# Create an output directory
+mkdir -p bed
+
+# Loop through all GFF3 files in the folder
+for file in *.gff3.gz; do
+    # Define output BED filename
+    output="bed/${file%.gff3.gz}.bed"
+
+    # Process each file
+    gunzip -c "$file" | awk '
+    $3 == "mRNA" {
+        gsub(/^ID=/, "", $9);         # Remove "ID=" prefix
+        gsub(/\.a[0-9]+/, "", $1);    # Remove .a01, .a02, etc. from chromosome name
+        gsub(/_RagTag/, "", $1);      # Remove _RagTag from chromosome name
+        split($9, arr, ";");          # Extract gene ID before the first semicolon
+        gsub(/\.a[0-9]+/, "", arr[1]); # Remove .a01, .a02, etc. from gene ID
+        gsub(/_RagTag/, "", arr[1]);  # Remove _RagTag from gene ID
+        if ($1 ~ /Chr/) {             # Keep only chromosome entries
+            print $1"\t"$4"\t"$5"\t"arr[1];
+        }
+    }' > "$output"
+
+    echo "Processed: $file -> $output"
+done
+
+echo "Standardization completed. BED files saved in 'bed' directory."
+
+##############################################################################################
+#Check genespace installation below-painful also need .fa not fasta when running orthonder, so
+for file in peptide/*.fasta.gz; do
+    gunzip -c "$file" > "${file%.fasta.gz}.fa"
+done
+#cd peptide and rm *.gz
+
+##################################
+#Run orthofinder outside genespace
+screen -S orthofinder_genespace3
+conda activate genespace_env
+
+/data1/jkitony/miniconda3/envs/genespace_env/bin/orthofinder -f /data1/jkitony/Sorghum/genespace/fiftygenomes/peptide -t 64 -a 25 -X -o /data1/jkitony/Sorghum/genespace/fiftygenomes/orthofinder
+
+##################
+R 
+# Load GENESPACE
+library(GENESPACE)
+gpar <- init_genespace(
+  wd = "/data1/jkitony/Sorghum/genespace/fiftygenomes",
+  path2mcscanx = "/data1/jkitony/Sorghum/genespace/MCScanX-master/"
+)
+
+# Run GENESPACE pipeline
+gpar <- run_genespace(gsParam = gpar)
+
+################
+#BOLD
+################
+# Load required libraries
+library(GENESPACE)
+library(ggplot2)
+
+# Set global theme for all plots (bold text)
+theme_set(theme_minimal(base_size = 14, base_family = "sans") +
+          theme(text = element_text(face = "bold")))
+
+# Initialize GENESPACE
+gpar <- init_genespace(
+  wd = "/data1/jkitony/Sorghum/genespace/tengenomes",
+  path2mcscanx = "/data1/jkitony/Sorghum/genespace/MCScanX-master/"
+)
+
+# Run GENESPACE pipeline
+gpar <- run_genespace(gsParam = gpar)
+
+# Generate the main GENESPACE synteny plot with bold text
+p1 <- plot_genespace(gsParam = gpar) +
+  theme(
+    axis.title = element_text(face = "bold", size = 14),
+    axis.text = element_text(face = "bold", size = 12),
+    legend.title = element_text(face = "bold", size = 14),
+    legend.text = element_text(face = "bold", size = 12),
+    plot.title = element_text(face = "bold", size = 16)
+  )
+
+# Generate the "Riparian" plot with bold text
+p2 <- plot_riparian(gsParam = gpar) +
+  theme(
+    axis.title = element_text(face = "bold", size = 14),
+    axis.text = element_text(face = "bold", size = 12),
+    legend.title = element_text(face = "bold", size = 14),
+    legend.text = element_text(face = "bold", size = 12),
+    plot.title = element_text(face = "bold", size = 16)
+  )
+
+
+###################################
+#Fig. 2g KEGG
+####################################
+#pangenome_private_orthogroups.tsv from up there 6389 OG
+#############################################
+#Contributers per genome in
+#plot because of few but below for all 6389
+plot_pangenome_private_OG_contributors.py
+##############################################
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# Load the pangenome-private orthogroups table
+df = pd.read_csv("pangenome_private_orthogroups.tsv", sep="\t", index_col=0)
+
+# Count number of OGs each genome contributes to
+contribution_counts = df.notna().sum(axis=0).sort_values(ascending=False)
+
+# Save contribution counts
+contribution_counts.to_csv("pangenome_private_OG_contributors.tsv", sep="\t", header=["Private_OG_Count"])
+
+# Plot
+plt.figure(figsize=(14, 6))
+plt.bar(contribution_counts.index, contribution_counts.values, color="indigo", edgecolor="black")
+
+# Bold styling
+plt.xticks(rotation=90, ha="center", fontsize=11, fontweight='bold')
+plt.yticks(fontsize=12, fontweight='bold')
+plt.ylabel("Number of Pangenome-Private OGs", fontsize=14, fontweight='bold')
+plt.title("Pangenome-Exclusive Orthogroup Contribution per Genome", fontsize=16, fontweight='bold')
+
+plt.tight_layout()
+plt.savefig("pangenome_private_OG_contributors_barplot_bold_nolabels.pdf")
+plt.savefig("pangenome_private_OG_contributors_barplot_bold_nolabels.png", dpi=300)
+plt.show()
+########################################################################################################################################################
+#Use all genes from the 6,389 pangenome-private orthogroups (not just one representative).
+#extract_all_genes_from_OGs.py
+########################################################################################################################################################
+import pandas as pd
+
+# Load OGs
+df = pd.read_csv("pangenome_private_orthogroups.tsv", sep="\t", index_col=0)
+
+# Extract all gene IDs from all genomes
+all_genes = []
+for row in df.itertuples(index=False):
+    genes = pd.Series(row).dropna().astype(str).str.split(", ").sum()
+    all_genes.extend([g for g in genes if g.strip()])
+
+# Remove duplicates and save
+with open("pangenome_private_all_members_genes.txt", "w") as f:
+    f.write("\n".join(sorted(set(all_genes))))
+#69,991 genes in total
+######################################################################################################################################################
+#download emapper annotations
+emapper.sh
+chmod +x emapper.sh
+./emapper.sh
+
+##################
+#!/bin/bash
+
+# Define base S3 URL
+base_url="s3://salk-tm-dev/Sbic/pangenome_2024/assemblies"
+
+# Sample list
+samples=(
+    "BTX623" "RTx430" "Wild_PI156549_HAP1" "Wild_PI156549_HAP2"
+    "ExPVP_PI543243" "ExPVP_PI543246" "ExPVP_PI543247" "ExPVP_PI544069"
+    "ExPVP_PI554646" "ExPVP_PI554647" "ExPVP_PI554648" "ExPVP_PI554649"
+    "ExPVP_PI554650" "ExPVP_PI554652" "ExPVP_PI554654" "ExPVP_PI555457"
+    "ExPVP_PI561926" "ExPVP_PI562621" "ExPVP_PI562622" "ExPVP_PI562623"
+    "ExPVP_PI562624" "ExPVP_PI562625" "ExPVP_PI564085" "ExPVP_PI574398"
+    "ExPVP_PI574406" "ExPVP_PI574407" "ExPVP_PI594354" "ExPVP_PI594355"
+    "ExPVP_PI595221" "ExPVP_PI596332" "ExPVP_PI596567" "ExPVP_PI601264"
+    "ExPVP_PI601415" "ExPVP_PI601552" "ExPVP_PI601553" "ExPVP_PI601554"
+    "ExPVP_PI601555" "ExPVP_PI601556" "ExPVP_PI601557" "ExPVP_PI601716"
+    "ExPVP_PI601717" "ExPVP_PI601718" "ExPVP_PI601719" "ExPVP_PI601720"
+    "ExPVP_PI601721" "ExPVP_PI601743" "ExPVP_PI601744" "ExPVP_PI601756"
+    "ExPVP_PI602599" "ExPVP_PI602600"
+)
+
+# Output directory
+mkdir -p emapper_cleaned
+
+# Loop through all samples
+for sample in "${samples[@]}"; do
+    # Detect version (e.g., a01, a02)
+    version=$(aws s3 ls "$base_url/$sample/annotations/" | grep "emapper.annotations" | awk -F'.' '{print $2}' | head -n1)
+
+    if [[ -n "$version" ]]; then
+        annot_file="$sample.$version.emapper.annotations"
+        s3_path="$base_url/$sample/annotations/$annot_file"
+
+        # Download
+        aws s3 cp "$s3_path" "$annot_file"
+
+        if [[ -f "$annot_file" ]]; then
+            # Clean gene IDs and save
+            awk 'BEGIN {OFS="\t"} 
+                /^#/ {print; next}
+                {
+                    gsub(/\.a[0-9]+/, "", $1);
+                    gsub(/_RagTag/, "", $1);
+                    print
+                }' "$annot_file" > "emapper_cleaned/${sample}.emapper.cleaned.tsv"
+
+            echo "Processed: $annot_file -> emapper_cleaned/${sample}.emapper.cleaned.tsv"
+            rm "$annot_file"
+        else
+            echo "Download failed: $annot_file"
+        fi
+    else
+        echo "Warning: No emapper.annotations found for $sample"
+    fi
+done
+
+echo "All cleaned emapper files saved in 'emapper_cleaned/'"
+ 
+######################################################################################################################################################
+#extract_kos_for_pangenome.py
+annotate those genes
+####################################
+import csv
+import glob
+
+# Load gene list
+with open("pangenome_private_all_members_genes.txt") as f:
+    pan_genes = set(line.strip() for line in f)
+
+# Containers
+term2gene = []
+term2name = {}
+
+expected_columns = [
+    "query_name", "seed_eggNOG_ortholog", "seed_ortholog_evalue", "seed_ortholog_score",
+    "best_tax_level", "Preferred_name", "GOs", "EC", "KEGG_ko", "KEGG_Pathway", "KEGG_Module",
+    "KEGG_Reaction", "KEGG_rclass", "BRITE", "KEGG_TC", "CAZy", "BiGG_Reaction", "taxonomic scope",
+    "eggNOG OGs", "best eggNOG OG", "COG Functional cat.", "eggNOG free text desc."
+]
+expected_n = len(expected_columns)
+
+for file in glob.glob("emapper_cleaned/*.emapper.cleaned.tsv"):
+    with open(file) as f:
+        reader = csv.reader(f, delimiter="\t")
+        for row in reader:
+            if not row or row[0].startswith("#"):
+                continue
+            while len(row) < expected_n:
+                try:
+                    row += next(reader)
+                except StopIteration:
+                    break
+            if len(row) < expected_n:
+                continue
+
+            d = dict(zip(expected_columns, row))
+            gene = d["query_name"]
+            kos = d["KEGG_ko"]
+            desc = d["Preferred_name"] or ""
+
+            if gene not in pan_genes or not kos or not kos.startswith("ko:"):
+                continue
+
+            for ko in kos.split(","):
+                term2gene.append((ko.strip(), gene))
+                term2name[ko.strip()] = desc.strip()
+
+# Save term2gene
+with open("term2gene.tsv", "w") as f:
+    f.write("KO\tGeneID\n")
+    for ko, gid in sorted(term2gene):
+        f.write(f"{ko}\t{gid}\n")
+
+# Save term2name
+with open("term2name.tsv", "w") as f:
+    f.write("KO\tDescription\n")
+    for ko, desc in sorted(term2name.items()):
+        f.write(f"{ko}\t{desc}\n")
+
+# Save KO list
+with open("panonly_kos.txt", "w") as f:
+    for ko in sorted(term2name):
+        f.write(f"{ko}\n")
+
+
+
+#Supplementary Table =term2gene.tsv
+####################################
+#plot_panonly_ko_barplot.py
+##################################
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# Load KO mappings
+term2gene = pd.read_csv("term2gene.tsv", sep="\t")
+term2name = pd.read_csv("term2name.tsv", sep="\t")
+
+# Load KO list (just for consistency)
+with open("panonly_kos.txt") as f:
+    panonly_kos = set(line.strip() for line in f)
+
+# Merge mappings
+merged = term2gene.merge(term2name, on="KO")
+
+# Keep only pan-exclusive KOs
+pan_df = merged[merged["KO"].isin(panonly_kos)]
+
+# Group by function and count
+top_kos = (
+    pan_df.groupby("Description")
+    .size()
+    .sort_values(ascending=False)
+    .head(20)
+)
+
+# Plot
+plt.figure(figsize=(10, 6))
+top_kos.plot(kind="barh", color="teal", edgecolor="black")
+plt.xlabel("Number of Genes", fontsize=12, fontweight="bold")
+plt.ylabel("KEGG Function", fontsize=12, fontweight="bold")
+plt.title("Top KEGG Functions Exclusive to Pangenome", fontsize=14, fontweight="bold")
+plt.xticks(fontsize=10, fontweight="bold")
+plt.yticks(fontsize=10, fontweight="bold")
+plt.gca().invert_yaxis()
+plt.tight_layout()
+plt.savefig("panonly_kegg_functions_barplot.pdf")
+plt.savefig("panonly_kegg_functions_barplot.png", dpi=300)
+plt.show()
