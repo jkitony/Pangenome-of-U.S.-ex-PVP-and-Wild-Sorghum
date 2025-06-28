@@ -29,7 +29,7 @@ Population genomics analyses (F<sub>ST</sub>, π, XP-CLR) identifying sweep re
 Functional enrichment of genes under selection
 Variation in copy number and methylation profiles for key candidate genes
 
-#Data Access
+## Data Access
 Raw sequencing reads: NCBI SRA PRJNA1283509
 Genome assemblies and annotations:
 https://resources.michael.salk.edu/ 
