@@ -1,0 +1,788 @@
+#########################################################################################
+################## Fig1a: Genome Total and Gene Count
+
+############################
+#Plot : genome_length_genes
+############################
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# Read the data file
+file_name = "assembly_gene_stats.txt"
+data = pd.read_csv(file_name, sep="\t")
+
+# Ensure numeric conversion for relevant columns
+data["assembly_total_len"] = data["assembly_total_len"].astype(float) / 1e6  # Convert to Mbp
+data["Genes"] = data["Genes"].astype(int)
+
+# Create the dual-axis plot
+fig, ax1 = plt.subplots(figsize=(10, 6))
+
+# Bar plot for genome total length
+data.plot(
+    x="Genotype",
+    y="assembly_total_len",
+    kind="bar",
+    ax=ax1,
+    color="skyblue",
+    alpha=0.8,
+    legend=False,
+)
+ax1.set_xlabel("Genotype")
+ax1.set_ylabel("Genome Total Length (Mbp)", color="blue")
+ax1.tick_params(axis="y", labelcolor="blue")
+
+# Line plot for gene count on secondary axis
+ax2 = ax1.twinx()
+ax2.plot(
+    data["Genotype"],
+    data["Genes"],
+    color="red",
+    marker="o",
+    linestyle="-",
+    label="Genes",
+)
+ax2.set_ylabel("Gene Count", color="red")
+ax2.tick_params(axis="y", labelcolor="red")
+
+# Adjust secondary y-axis range
+gene_min = data["Genes"].min()
+gene_max = data["Genes"].max()
+gene_interval = max((gene_max - gene_min) // 5, 1)  # Avoid division by zero
+ax2.set_ylim(0, gene_max * 1.2)  # Extend to fit all values
+ax2.set_yticks([0, gene_min, gene_min + gene_interval, gene_min + 2 * gene_interval, gene_max])
+ax2.set_yticklabels([0, gene_min, gene_min + gene_interval, gene_min + 2 * gene_interval, gene_max])
+
+# Add title
+ax1.set_title("Genome Total Length and Gene Count")
+
+# Adjust legends
+legend1 = ax1.legend(["Total Length (Mbp)"], loc="upper left", bbox_to_anchor=(0.1, 1), edgecolor="black")
+legend2 = ax2.legend(["Genes"], loc="upper right", bbox_to_anchor=(0.85, 1), edgecolor="black")
+
+# Rotate x-axis labels for better readability
+plt.xticks(rotation=90, ha="center")
+
+# Adjust layout
+plt.tight_layout()
+
+# Save the plot as PNG and PDF
+plt.savefig("genome_length_genes.png")
+plt.savefig("genome_length_genes.pdf")
+
+plt.show()
+
+
+#########################################################################################
+################## Fig1b: N50
+#######################
+#Plot Assembly_Nx_plot
+#######################
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
+import matplotlib.patches as mpatches
+
+# Read the table
+df = pd.read_csv("Fig1b_Nx.txt", sep="\t")
+
+# Clean extra spaces
+df.columns = df.columns.str.strip()
+df['Technology'] = df['Technology'].str.strip()
+
+# Nx points (x-axis)
+nx_points = [0, 50, 70, 90, 100]
+
+# Setup plot
+plt.figure(figsize=(10, 6))
+
+# Plot each accession
+for idx, row in df.iterrows():
+    # y-values: convert bp to Mb
+    y_values = [row['assembly_N0'], row['assembly_N50'], row['assembly_N70'], row['assembly_N90'], row['assembly_N100']]
+    y_values = [val / 1e6 for val in y_values]  # bp → Mb
+    
+    # Color based on technology
+    color = 'red' if row['Technology'] == 'HiFi' else 'black'
+    
+    # Plot line with transparency
+    plt.plot(nx_points, y_values, color=color, alpha=0.5, linewidth=1)
+
+# Add blue dotted vertical line at N50 (x=50)
+plt.axvline(x=50, color='blue', linestyle=':', linewidth=2)
+
+# Compute average N50 length (Mb)
+average_N50_bp = df['assembly_N50'].mean()
+average_N50_mb = average_N50_bp / 1e6
+
+# Add blue dotted horizontal line at average N50
+plt.axhline(y=average_N50_mb, color='blue', linestyle=':', linewidth=2)
+
+# Add text labels
+plt.text(52, average_N50_mb * 1.1, f"Avg N50 = {average_N50_mb:.1f} Mb", color='blue', fontsize=11, fontweight='bold')
+plt.text(51, plt.ylim()[1] * 0.95, "N50", color='blue', fontsize=11, fontweight='bold')
+
+# Labels and title - ALL BOLD
+plt.xlabel("Nx (%)", fontsize=14, fontweight='bold')
+plt.ylabel("Contig Length (Mb)", fontsize=14, fontweight='bold')
+plt.title("", fontsize=16, fontweight='bold')
+
+# Keep y-axis in plain numbers
+plt.gca().yaxis.set_major_formatter(ticker.FormatStrFormatter('%.0f'))
+
+# Ensure y-axis starts at 0
+plt.ylim(bottom=0)
+
+# Grid
+plt.grid(True, which="both", linestyle="--", linewidth=0.5)
+
+# Tight layout with padding
+plt.tight_layout(pad=1.0)
+
+# Manual legend - BOLD
+red_patch = mpatches.Patch(color='red', label='HiFi')
+black_patch = mpatches.Patch(color='black', label='ONT')
+legend = plt.legend(handles=[red_patch, black_patch], loc='lower left', fontsize=12)
+for text in legend.get_texts():
+    text.set_fontweight('bold')
+
+# Save
+plt.savefig("Assembly_Nx_plot.png", dpi=300, bbox_inches='tight')
+plt.savefig("Assembly_Nx_plot.pdf", bbox_inches='tight')
+
+# Show
+plt.show()
+
+
+#########################################################################################
+################## Fig1c: TE
+######################
+#Summerize TE Helixer
+######################
+import os
+import re
+import pandas as pd
+
+# Directory containing the files from Assembler
+directory = '/mnt/c/Sorghum/2025/Annotation_TE_Genes/data'
+
+# Prepare a list to collect all data dictionaries
+all_data = []
+
+# Regex patterns to capture general metrics and specific repeat categories
+general_metrics_regex = {
+    'sequences': r'sequences:\s+(\d+)',
+    'total_length': r'total length:\s+(\d+)\s*bp',
+    'GC_level': r'GC level:\s+(\d+\.\d{2})\s*%',
+    'bases_masked': r'bases masked:\s+(\d+)\s*bp'
+}
+
+# Special regex for 'Total interspersed repeats' which only has length and percentage
+special_metrics_regex = r'(?P<name>Total interspersed repeats):\s*(?P<length>\d+)\s*bp\s*(?P<percentage>\d+\.\d{2})\s*%'
+
+# Standard regex for repeats and elements
+standard_metrics_regex = r'(?P<name>[^\d]+\S*)\s+(?P<count>\d+)\s+(?P<length>\d+)\s*bp\s+(?P<percentage>\d+\.\d{2})\s*%'
+
+# Function to process each file
+def process_file(file_path):
+    with open(file_path, 'r') as file:
+        lines = file.readlines()
+
+    info = {'Genome': os.path.basename(file_path)}
+
+    # Extract general metrics
+    for metric, regex in general_metrics_regex.items():
+        for line in lines:
+            match = re.search(regex, line)
+            if match:
+                info[metric] = int(match.group(1)) if metric != 'GC_level' else float(match.group(1))
+
+    # Extract repeat metrics
+    for line in lines:
+        if 'Total interspersed repeats' in line:
+            match = re.search(special_metrics_regex, line)
+            if match:
+                details = match.groupdict()
+                base_key = details['name'].strip().replace(' ', '_')
+                info[f'{base_key}_Length'] = int(details['length'])
+                info[f'{base_key}_Percentage'] = float(details['percentage'])
+        else:
+            match = re.search(standard_metrics_regex, line)
+            if match:
+                details = match.groupdict()
+                base_key = details['name'].strip().replace(' ', '_').replace('/', '_').replace('-', '_')
+                info[f'{base_key}_Count'] = int(details['count'])
+                info[f'{base_key}_Length'] = int(details['length'])
+                info[f'{base_key}_Percentage'] = float(details['percentage'])
+
+    return info
+
+# Loop through each file in the directory
+for filename in os.listdir(directory):
+    file_path = os.path.join(directory, filename)
+    if os.path.isfile(file_path):  # Ensure it's a file (not a directory)
+        file_data = process_file(file_path)
+        all_data.append(file_data)
+
+# Create DataFrame
+df = pd.DataFrame(all_data)
+
+# Save to CSV
+df.to_csv('/mnt/c/Sorghum/2025/Annotation_TE_Genes/summary.csv', index=False)
+
+# Print DataFrame to check
+print(df.head())
+
+##########################################
+#Plot TES distribution:genome_composition
+#########################################
+import matplotlib.pyplot as plt
+from matplotlib.font_manager import FontProperties
+import os
+
+def plot_repeat_summary(dataframe):
+    # Ensure the output directory exists
+    output_dir = '/mnt/c/Sorghum/2025/Annotation_TE_Genes/plots'
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    # Define columns for retroelements and DNA transposons
+    retroelements_cols = ['SINEs:_Percentage', 'Penelope:_Percentage', 'LINEs:_Percentage',
+                          'LTR_elements:_Percentage', 'Ty1_Copia_Percentage', 'Gypsy_DIRS1_Percentage',
+                          'Retroviral_Percentage']
+    dna_transposons_cols = ['hobo_Activator_Percentage', 'MULE_MuDR_Percentage',
+                            'Tourist_Harbinger_Percentage']
+
+    # Calculate sums for clusters
+    dataframe['RetroelementsCluster'] = dataframe[retroelements_cols].sum(axis=1)
+    dataframe['DNATransposonsCluster'] = dataframe[dna_transposons_cols].sum(axis=1)
+
+    # Calculate non-repeats percentage based on total interspersed repeats
+    dataframe['NonRepeatsPercentage'] = 100 - dataframe['Total_interspersed_repeats_Percentage']
+
+    # Prepare data for plotting
+    plot_data = dataframe[['Genome', 'RetroelementsCluster', 'DNATransposonsCluster',
+                           'Rolling_circles_Percentage', 'Unclassified:_Percentage', 'NonRepeatsPercentage']]
+    plot_data.set_index('Genome', inplace=True)
+
+    # Normalize the data to ensure it sums to 100%
+    plot_data = plot_data.div(plot_data.sum(axis=1), axis=0) * 100
+
+    # Replace ".repeatmasker" in index for cleaner x-axis labels
+    plot_data.index = plot_data.index.str.replace(".repeatmasker", "")
+
+    # Create a stacked bar plot
+    plt.figure(figsize=(24, 12), dpi=300)  # Adjust figure size for better publication quality
+    ax = plot_data.plot(kind='bar', stacked=True)
+    ax.set_ylabel('Percentage of Genome', fontsize=12, fontweight='bold')
+    ax.set_xlabel('Genome', fontsize=12, fontweight='bold')
+    ax.set_title('Sorghum pangenome transposable elements', fontsize=12, fontweight='bold')
+
+    # Customize the legend with simplified labels
+    labels = ['Retroelements', 'DNA transposons', 'Rollingcircles', 'Unclassified', 'Stable regions']
+    handles, _ = ax.get_legend_handles_labels()
+    font_prop = FontProperties(weight='bold', size=6)  # Set font properties
+    ax.legend(handles, labels, title='', bbox_to_anchor=(0.1, 0.2), loc='upper left', fontsize=8, prop=font_prop, ncol=2)
+
+    # Bold the axis ticks
+    plt.setp(ax.xaxis.get_majorticklabels(), fontsize=6, fontweight='bold', rotation=90)
+    plt.setp(ax.yaxis.get_majorticklabels(), fontsize=6, fontweight='bold')
+
+    # Adjust layout to not cut off legend or labels
+    plt.tight_layout(rect=[0, 0, 0.85, 1])  # Adjust the rect parameter to provide more space for the plot
+
+    # Save figures in the specified directory
+    pdf_path = os.path.join(output_dir, 'genome_composition.pdf')
+    png_path = os.path.join(output_dir, 'genome_composition.png')
+    plt.savefig(pdf_path, format='pdf')  # Save as PDF
+    plt.savefig(png_path, format='png')  # Save as PNG
+    
+    # Show plot
+    plt.show()
+
+# Call the function with the loaded DataFrame
+plot_repeat_summary(df)
+
+
+
+#########################################################################################
+################## Fig1d: Genome CEN lengths
+
+#(quartet_env) [ jkitony@10.7.30.227:/data1/jkitony/Sorghum/graph_pangenome2025/fiftygenomes/TenChrFastaCleaned/quarTeT ]$
+python quartet.py CentroMiner -h
+Speed up skipping plots	--noplot
+Lower min length to accept more/faster candidates	-l 50000
+Allow shorter monomers	-n 50
+Allow bigger monomers	-m 500
+s3://salk-tm-dev/Sbic/pangenome_2024/assemblies/ExPVP_PI543243/annotations/ExPVP_PI543243.a01.munged/
+
+#################
+#DOWNLOAD GENES
+#!/bin/bash
+# Define base S3 URL
+base_url="s3://salk-tm-dev/Sbic/pangenome_2024/assemblies"
+# List of sample directories to download from
+samples=(
+    "BTX623"
+    "RTx430"
+    "Wild_PI156549_HAP1"
+    "Wild_PI156549_HAP2"
+    "ExPVP_PI543243"
+    "ExPVP_PI543246"
+    "ExPVP_PI543247"
+    "ExPVP_PI544069"
+    "ExPVP_PI554646"
+    "ExPVP_PI554647"
+    "ExPVP_PI554648"
+    "ExPVP_PI554649"
+    "ExPVP_PI554650"
+    "ExPVP_PI554652"
+    "ExPVP_PI554654"
+    "ExPVP_PI555457"
+    "ExPVP_PI561926"
+    "ExPVP_PI562621"
+    "ExPVP_PI562622"
+    "ExPVP_PI562623"
+    "ExPVP_PI562624"
+    "ExPVP_PI562625"
+    "ExPVP_PI564085"
+    "ExPVP_PI574398"
+    "ExPVP_PI574406"
+    "ExPVP_PI574407"
+    "ExPVP_PI594354"
+    "ExPVP_PI594355"
+    "ExPVP_PI595221"
+    "ExPVP_PI596332"
+    "ExPVP_PI596567"
+    "ExPVP_PI601264"
+    "ExPVP_PI601415"
+    "ExPVP_PI601552"
+    "ExPVP_PI601553"
+    "ExPVP_PI601554"
+    "ExPVP_PI601555"
+    "ExPVP_PI601556"
+    "ExPVP_PI601557"
+    "ExPVP_PI601716"
+    "ExPVP_PI601717"
+    "ExPVP_PI601718"
+    "ExPVP_PI601719"
+    "ExPVP_PI601720"
+    "ExPVP_PI601721"
+    "ExPVP_PI601743"
+    "ExPVP_PI601744"
+    "ExPVP_PI601756"
+    "ExPVP_PI602599"
+    "ExPVP_PI602600"   
+)
+
+# Loop through samples and download
+for sample in "${samples[@]}"; do
+    # Find the appropriate version (a01, a02, etc.) dynamically
+    version=$(aws s3 ls "$base_url/$sample/annotations/" | grep "munged" | awk -F'.' '{print $2}' | head -n1)
+
+    if [[ -n "$version" ]]; then
+        aws s3 cp "$base_url/$sample/annotations/$sample.$version.munged/$sample.$version.softmasked.gff3.gz" .
+        
+        # Rename file
+        mv "$sample.$version.softmasked.gff3.gz" "$sample.gff3.gz"
+    else
+        echo "Warning: No version found for $sample, skipping..."
+    fi
+done
+
+echo "Download and renaming complete."
+
+#################
+#REPEATS DOWNLOAD
+base_url="s3://salk-tm-dev/Sbic/pangenome_2024/assemblies"
+# List of sample directories to download from
+samples=(
+    "BTX623"
+    "RTx430"
+    "Wild_PI156549_HAP1"
+    "Wild_PI156549_HAP2"
+    "ExPVP_PI543243"
+    "ExPVP_PI543246"
+    "ExPVP_PI543247"
+    "ExPVP_PI544069"
+    "ExPVP_PI554646"
+    "ExPVP_PI554647"
+    "ExPVP_PI554648"
+    "ExPVP_PI554649"
+    "ExPVP_PI554650"
+    "ExPVP_PI554652"
+    "ExPVP_PI554654"
+    "ExPVP_PI555457"
+    "ExPVP_PI561926"
+    "ExPVP_PI562621"
+    "ExPVP_PI562622"
+    "ExPVP_PI562623"
+    "ExPVP_PI562624"
+    "ExPVP_PI562625"
+    "ExPVP_PI564085"
+    "ExPVP_PI574398"
+    "ExPVP_PI574406"
+    "ExPVP_PI574407"
+    "ExPVP_PI594354"
+    "ExPVP_PI594355"
+    "ExPVP_PI595221"
+    "ExPVP_PI596332"
+    "ExPVP_PI596567"
+    "ExPVP_PI601264"
+    "ExPVP_PI601415"
+    "ExPVP_PI601552"
+    "ExPVP_PI601553"
+    "ExPVP_PI601554"
+    "ExPVP_PI601555"
+    "ExPVP_PI601556"
+    "ExPVP_PI601557"
+    "ExPVP_PI601716"
+    "ExPVP_PI601717"
+    "ExPVP_PI601718"
+    "ExPVP_PI601719"
+    "ExPVP_PI601720"
+    "ExPVP_PI601721"
+    "ExPVP_PI601743"
+    "ExPVP_PI601744"
+    "ExPVP_PI601756"
+    "ExPVP_PI602599"
+    "ExPVP_PI602600"   
+)
+
+# Loop through samples and download
+for sample in "${samples[@]}"; do
+    # Find the appropriate version (a01, a02, etc.) dynamically
+    version=$(aws s3 ls "$base_url/$sample/annotations/" | grep "munged" | awk -F'.' '{print $2}' | head -n1)
+
+    if [[ -n "$version" ]]; then
+        aws s3 cp "$base_url/$sample/annotations/$sample.$version.munged/$sample.$version.softmasked.repeatmasker.bed.gz" .
+        
+        # Rename file
+        mv "$sample.$version.softmasked.repeatmasker.bed.gz" "$sample.repeatmasker.bed.gz"
+    else
+        echo "Warning: No version found for $sample, skipping..."
+    fi
+done
+
+echo "Download and renaming complete."
+
+##################
+#BED to GFF3 all
+samples=(
+    "BTX623"
+    "RTx430"
+    "Wild_PI156549_HAP1"
+    "Wild_PI156549_HAP2"
+    "ExPVP_PI543243"
+    "ExPVP_PI543246"
+    "ExPVP_PI543247"
+    "ExPVP_PI544069"
+    "ExPVP_PI554646"
+    "ExPVP_PI554647"
+    "ExPVP_PI554648"
+    "ExPVP_PI554649"
+    "ExPVP_PI554650"
+    "ExPVP_PI554652"
+    "ExPVP_PI554654"
+    "ExPVP_PI555457"
+    "ExPVP_PI561926"
+    "ExPVP_PI562621"
+    "ExPVP_PI562622"
+    "ExPVP_PI562623"
+    "ExPVP_PI562624"
+    "ExPVP_PI562625"
+    "ExPVP_PI564085"
+    "ExPVP_PI574398"
+    "ExPVP_PI574406"
+    "ExPVP_PI574407"
+    "ExPVP_PI594354"
+    "ExPVP_PI594355"
+    "ExPVP_PI595221"
+    "ExPVP_PI596332"
+    "ExPVP_PI596567"
+    "ExPVP_PI601264"
+    "ExPVP_PI601415"
+    "ExPVP_PI601552"
+    "ExPVP_PI601553"
+    "ExPVP_PI601554"
+    "ExPVP_PI601555"
+    "ExPVP_PI601556"
+    "ExPVP_PI601557"
+    "ExPVP_PI601716"
+    "ExPVP_PI601717"
+    "ExPVP_PI601718"
+    "ExPVP_PI601719"
+    "ExPVP_PI601720"
+    "ExPVP_PI601721"
+    "ExPVP_PI601743"
+    "ExPVP_PI601744"
+    "ExPVP_PI601756"
+    "ExPVP_PI602599"
+    "ExPVP_PI602600"
+)
+
+for sample in "${samples[@]}"; do
+    awk 'BEGIN{OFS="\t"} {print $1, "RepeatMasker", "repeat_region", $2+1, $3, ".", $6, ".", "ID="$4";Note="$4}' \
+        "${sample}.repeatmasker.bed" > "${sample}.repeatmasker.gff3"
+    echo "Converted ${sample}.repeatmasker.bed to ${sample}.repeatmasker.gff3"
+done
+
+
+###################
+#Run quartet
+conda activate quartet_env
+import os
+import pandas as pd
+import subprocess
+import concurrent.futures
+
+# SETTINGS
+fasta_dir = "/data1/jkitony/Sorghum/graph_pangenome2025/fiftygenomes/TenChrFastaCleaned/quarTeT"
+output_dir = os.path.join(fasta_dir, "Candidates")
+os.makedirs(output_dir, exist_ok=True)
+n_threads = 40  # Number of CPUs to use
+
+# FUNCTION to check if all .candidate files exist for a sample
+def all_candidates_exist(prefix):
+    expected = [os.path.join(output_dir, f"{prefix}.Chr{str(c).zfill(2)}_Candidates.candidate") for c in range(1, 11)]
+    return all(os.path.exists(f) for f in expected)
+
+# FUNCTION to run CentroMiner if needed
+rerun_list = []
+
+def run_centrominer_if_needed(fasta_file):
+    fasta_path = os.path.join(fasta_dir, fasta_file)
+    prefix = os.path.splitext(fasta_file)[0]
+
+    if all_candidates_exist(prefix):
+        print(f"✅ {prefix}: All candidate files already exist. Skipping...")
+        return prefix
+
+    print(f"🚀 {prefix}: Missing candidate files. Running CentroMiner...")
+    rerun_list.append(prefix)
+    cmd = [
+        "python", "quartet.py", "CentroMiner",
+        "-i", fasta_path,
+        "-t", "32",  # Threads used by CentroMiner internally
+        "-p", prefix
+    ]
+    subprocess.run(cmd, cwd=fasta_dir)
+    return prefix
+
+# FUNCTION to parse .candidate files
+def parse_candidate(prefix):
+    candidate_data = []
+    for chr_num in range(1, 11):
+        chr_id = f"Chr{str(chr_num).zfill(2)}"
+        candidate_file = os.path.join(output_dir, f"{prefix}.{chr_id}_Candidates.candidate")
+
+        if not os.path.exists(candidate_file):
+            print(f"⚠️ Warning: Missing {candidate_file}")
+            continue
+
+        with open(candidate_file) as f:
+            for line in f:
+                if line.startswith("#") or line.startswith("\t") or line.strip() == "":
+                    continue
+                parts = line.strip().split("\t")
+                if len(parts) >= 6:
+                    chrom = parts[0]
+                    start = int(parts[1])
+                    end = int(parts[2])
+                    length = int(parts[3])
+                    tr_length = int(parts[4])
+                    tr_coverage = float(parts[5].replace('%', ''))
+                    candidate_data.append({
+                        "Sample": prefix,
+                        "Chromosome": chrom,
+                        "Start": start,
+                        "End": end,
+                        "Centromere_Length": length,
+                        "TR_Length": tr_length,
+                        "TR_Coverage_Percent": tr_coverage
+                    })
+    return candidate_data
+
+# =============================================
+# MAIN PIPELINE
+# =============================================
+
+# 1. Discover FASTA files
+fasta_files = [f for f in os.listdir(fasta_dir) if f.endswith(".fasta")]
+print(f"🔵 Found {len(fasta_files)} FASTA files.\n")
+
+# 2. Run CentroMiner only if needed
+print("🚀 Checking and running CentroMiner where needed...\n")
+with concurrent.futures.ThreadPoolExecutor(max_workers=n_threads) as executor:
+    prefixes = list(executor.map(run_centrominer_if_needed, fasta_files))
+
+# 3. Save rerun samples
+if rerun_list:
+    with open("rerun_samples.txt", "w") as f:
+        for p in rerun_list:
+            f.write(p + "\n")
+    print(f"\n📜 List of rerun samples saved to 'rerun_samples.txt'. ({len(rerun_list)} samples rerun)\n")
+else:
+    print("\n✅ No rerun needed. All samples already completed.\n")
+
+print("✅ Finished running CentroMiner on required genomes.\n")
+
+# 4. Parse candidate outputs
+print("📋 Parsing .candidate outputs...\n")
+all_candidates = []
+
+for prefix in prefixes:
+    candidates = parse_candidate(prefix)
+    if candidates:
+        all_candidates.extend(candidates)
+    else:
+        print(f"⚠️ No centromere candidates parsed for {prefix}. Skipping...")
+
+# 5. Build DataFrame
+candidates_df = pd.DataFrame(all_candidates)
+
+if candidates_df.empty:
+    print("⚠️ Warning: No centromere candidate regions were parsed from any sample. Check if CentroMiner ran correctly.\n")
+else:
+    print(f"✅ Parsed {len(candidates_df)} centromere regions from .candidate files.\n")
+
+    # 6. Save full candidate table
+    candidates_df.to_csv("centromere_candidates_full.tsv", sep="\t", index=False)
+    print("✅ Detailed centromere candidates saved to 'centromere_candidates_full.tsv'.")
+
+    # 7. Summarize per sample
+    summary = candidates_df.groupby("Sample").agg(
+        Total_Centromere_Length_bp=("Centromere_Length", "sum"),
+        Average_TR_Coverage_Percent=("TR_Coverage_Percent", "mean"),
+        Max_TR_Coverage_Percent=("TR_Coverage_Percent", "max"),
+        Number_of_Centromere_Regions=("Chromosome", "count")
+    ).reset_index()
+
+    summary.to_csv("centromere_summary_per_sample.tsv", sep="\t", index=False)
+    print("✅ Summary per sample saved to 'centromere_summary_per_sample.tsv'.\n")
+
+print("🎉 All Done!")
+
+#######################################
+#Plot Genome_vs_Centromere_correlation
+#######################################
+import pandas as pd
+import matplotlib.pyplot as plt
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import r2_score
+
+# Load the file safely (fix BOM issue)
+file_path = 'Quartet_summary_correlation.txt'
+df = pd.read_csv(file_path, sep='\t', encoding='utf-8-sig')
+
+# Strip any spaces just in case
+df.columns = df.columns.str.strip()
+
+# Prepare the data
+x = df['Centromere_length'] / 1e6  # Mbp
+y = df['Genome_length'] / 1e6      # Mbp
+
+# Fit linear regression
+model = LinearRegression()
+x_reshape = x.values.reshape(-1, 1)
+model.fit(x_reshape, y)
+y_pred = model.predict(x_reshape)
+r2 = r2_score(y, y_pred)
+n_samples = len(df)
+
+# Plot
+plt.figure(figsize=(10,6))
+plt.scatter(x, y, color='black', alpha=0.7, edgecolors='w', s=100)
+plt.plot(x, y_pred, linestyle='--', color='blue')
+
+# Labels and title
+plt.xlabel('Total Length of Centromere Repeats (Mbp)', fontsize=12, weight='bold')
+plt.ylabel('Genome Total Length (Mbp)', fontsize=12, weight='bold')
+plt.title('', fontsize=14, weight='bold')
+
+# Annotate R2 and sample size
+plt.text(0.05, 0.95, f'$R^2$ = {r2:.3f}\nSamples = {n_samples}', transform=plt.gca().transAxes,
+         verticalalignment='top', fontsize=12, bbox=dict(facecolor='white', alpha=0.5))
+
+# Tight layout
+plt.tight_layout()
+
+# Save
+plt.savefig('Genome_vs_Centromere_correlation.pdf')
+plt.savefig('Genome_vs_Centromere_correlation.png', dpi=300)
+plt.show()
+
+
+#########################################################################################
+################## Fig1e: Genome Repeats lengths
+
+##############################################################
+#plot Genome_vs_Total_interspersed_repeats_Length_correlation
+##############################################################
+import pandas as pd
+import matplotlib.pyplot as plt
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import r2_score
+
+# Load the file safely (fix BOM issue)
+file_path = 'Quartet_summary_correlation.txt'
+df = pd.read_csv(file_path, sep='\t', encoding='utf-8-sig')
+
+# Strip any spaces just in case
+df.columns = df.columns.str.strip()
+
+# Prepare the data
+x = df['Total_interspersed_repeats_Length'] / 1e6  # Mbp
+y = df['Genome_length'] / 1e6      # Mbp
+
+# Fit linear regression
+model = LinearRegression()
+x_reshape = x.values.reshape(-1, 1)
+model.fit(x_reshape, y)
+y_pred = model.predict(x_reshape)
+r2 = r2_score(y, y_pred)
+n_samples = len(df)
+
+# Plot
+plt.figure(figsize=(10,6))
+plt.scatter(x, y, color='green', alpha=0.7, edgecolors='w', s=100)
+plt.plot(x, y_pred, linestyle='--', color='red')
+
+# Labels and title
+plt.xlabel('Total Interspersed Repeats Length (Mbp)', fontsize=12, weight='bold')
+plt.ylabel('Genome Total Length (Mbp)', fontsize=12, weight='bold')
+plt.title('', fontsize=14, weight='bold')
+
+# Annotate R2 and sample size
+plt.text(0.05, 0.95, f'$R^2$ = {r2:.3f}\nSamples = {n_samples}', transform=plt.gca().transAxes,
+         verticalalignment='top', fontsize=12, bbox=dict(facecolor='white', alpha=0.5))
+
+# Tight layout
+plt.tight_layout()
+
+# Save
+plt.savefig('Genome_vs_Total_interspersed_repeats_Length_correlation.pdf')
+plt.savefig('Genome_vs_Total_interspersed_repeats_Length_correlation.png', dpi=300)
+plt.show()
+
+#########################################################################################
+################## Fig1f: pankmer
+(pankmer) [ jkitony@10.7.30.227:/data1/jkitony/my_workflows/pankmer ]$ pip install --upgrade pankmer
+
+#Build a k-mer index
+(pankmer) [ jkitony@10.7.30.227:/data1/jkitony/Sorghum/pankmer_pangenome2025 ]$
+pankmer index -g sbic50_genomes/ -t 45 -o sbic50_genomes_index.tar
+
+#Create an adjacency matrix
+
+pankmer adj-matrix -i sbic50_genomes_index.tar -o sbic50_genomes_adj.tsv
+
+########################
+#Plot a clustered heatmap
+pankmer clustermap -h
+pankmer clustermap -i sbic50_genomes_adj.tsv --width 20 --height 20 -o sbic50_genomes.pdf
+
+#Calculate collection curves
+pankmer collect -i sbic50_genomes_index.tar -o sbic50_genomes_kmer_collectors.pdf
+pankmer collect --conf -i sbic50_genomes_index.tar -o sbic50_genomes_kmer_conf.pdf
+
