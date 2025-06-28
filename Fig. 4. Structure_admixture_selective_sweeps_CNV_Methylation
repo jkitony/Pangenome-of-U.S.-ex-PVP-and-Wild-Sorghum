@@ -1,0 +1,2263 @@
+###########
+Tools
+- freebayes=1.3.6
+- plink-1.90b7.7  
+- bcftools
+- vcftools
+- ADMIXTURE Version 1.3.0 
+
+##############################################################################################
+##############################################################################################
+##############################################################################################
+
+plink --pca --vcf Sbic_manuscript71.freebayes.SNPs.filtered.vcf.gz  --chr 1-10 --allow-extra-chr --out sbic_exPVP71_pangenome
+
+##################
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import plotly.express as px
+import os
+from adjustText import adjust_text
+
+# === Setup output directory ===
+output_dir = "pca_plots_labeled_by_company_final"
+os.makedirs(output_dir, exist_ok=True)
+
+# === Load eigenvectors (PLINK format, no headers) ===
+evec = pd.read_csv("sbic_exPVP71_pangenome.eigenvec", delim_whitespace=True, header=None)
+evec.columns = ["Genotype", "Type"] + [f"PC{i}" for i in range(1, evec.shape[1] - 1)]
+
+# === Load metadata and merge ===
+meta = pd.read_csv("pangenome_meta_list.txt", sep="\t")  # Has PI, Type, Company
+meta = meta.rename(columns={"PI": "Genotype"})
+df = pd.merge(evec, meta, on="Genotype", how="left")
+
+# === Load eigenvalues and compute variance explained ===
+eigens = pd.read_csv("sbic_exPVP71_pangenome.eigenval", header=None)
+sum_eig = eigens[0].sum()
+for i in range(1, 7):  # Compute variance for PC1 to PC6
+    df[f"perc_var{i}"] = (eigens.iloc[i-1, 0] / sum_eig) * 100
+
+# === Define combinations of PCs to plot ===
+pca_combinations = [
+    ("PC1", "PC2", "perc_var1", "perc_var2"),
+    ("PC1", "PC3", "perc_var1", "perc_var3"),
+    ("PC3", "PC4", "perc_var3", "perc_var4"),
+    ("PC5", "PC6", "perc_var5", "perc_var6")
+]
+
+# === Generate plots ===
+for x, y, x_var, y_var in pca_combinations:
+    # === Matplotlib Plot (static) ===
+    plt.figure(figsize=(12, 6))
+    ax = sns.scatterplot(data=df, x=x, y=y, hue="Company", palette="Set2", s=60, edgecolor='black', alpha=0.9)
+
+    texts = []
+    for _, row in df.iterrows():
+        texts.append(
+            plt.text(row[x] + 0.01, row[y] + 0.01, row["Genotype"], fontsize=5, alpha=0.7)
+        )
+    adjust_text(texts, arrowprops=dict(arrowstyle='-', color='lightgray', lw=0.5))
+
+    plt.xlabel(f"{x} ({df[x_var].iloc[0]:.2f}% variance)", fontsize=13, fontweight="bold")
+    plt.ylabel(f"{y} ({df[y_var].iloc[0]:.2f}% variance)", fontsize=13, fontweight="bold")
+    plt.title(f"{x} vs {y} PCA - Colored by Source/Company", fontsize=15, fontweight="bold")
+    plt.legend(title="Source/Company", bbox_to_anchor=(1.05, 1), loc="upper left", fontsize=9)
+    plt.tight_layout(rect=[0, 0, 0.85, 1])
+
+    filename_base = f"{output_dir}/pca_labeled_{x}_vs_{y}"
+    plt.savefig(f"{filename_base}.png", dpi=300)
+    plt.savefig(f"{filename_base}.pdf", dpi=300)
+    plt.close()
+
+    # === Plotly Interactive Plot (HTML) ===
+    fig = px.scatter(
+        df, x=x, y=y, color="Company", text="Genotype",
+        hover_name="Genotype",
+        title=f"{x} vs {y} PCA - Interactive",
+        labels={x: f"{x} ({df[x_var].iloc[0]:.2f}%)", y: f"{y} ({df[y_var].iloc[0]:.2f}%)"},
+        width=1000, height=600
+    )
+    fig.update_traces(textposition="top center", marker=dict(size=10, line=dict(width=1, color='DarkSlateGrey')))
+    fig.update_layout(legend_title_text='Source/Company')
+
+    fig.write_html(f"{filename_base}.html")
+
+print("✅ All PCA plots saved as PNG, PDF, and interactive HTML.")
+###########################################################################
+#Admixture 
+#C:\Sorghum\2025\temp
+#/data1/jkitony/Sorghum/SNP_variants_2025_FINAL/temp/
+
+# Step 1: Filter the VCF to remove SNPs with too much missing data (e.g., >20% #--geno 0.2)
+plink --vcf Sbic_manuscript71.freebayes.SNPs.filtered.vcf.gz \
+      --chr 1-10 \
+      --allow-extra-chr \
+      --make-bed \
+      --out sbic_exPVP71_admixture_filtered
+
+# Step 2: Run ADMIXTURE with 5-fold CV from K=1 to 10
+conda activate admixture
+for K in {1..10}; do
+  echo "Running ADMIXTURE for K=$K"
+  admixture --cv=5 sbic_exPVP71_admixture_filtered.bed $K | tee log${K}.out
+done
+
+# Step 3: Extract CV errors
+grep -h "CV error" log*.out > cv_errors71_final.txt
+
+##################################
+
+# Part 1: Plot CV errors
+##################################
+# Read and parse cv_errors.txt
+cv_errors = []
+with open("cv_errors71_final.txt") as f:
+    for line in f:
+        line = line.strip()
+        if not line:
+            continue
+        if "CV error" in line:
+            k_part = line.split('(')[-1].split(')')[0]
+            K_value = int(k_part.split('=')[1])
+            cv_error = float(line.split(":")[-1].strip())
+            cv_errors.append((K_value, cv_error))
+
+cv_errors = sorted(cv_errors)
+K_values, CVs = zip(*cv_errors)
+
+# Plot CV error vs K
+plt.figure(figsize=(8,6))
+plt.plot(K_values, CVs, marker='o', linestyle='-')
+plt.xlabel("K", fontsize=14, fontweight='bold')
+plt.ylabel("CV Error", fontsize=14, fontweight='bold')
+plt.title("Cross-validation Errors for Different K Values", fontsize=16, fontweight='bold')
+plt.xticks(fontsize=12)
+plt.yticks(fontsize=12)
+plt.grid(True)
+plt.tight_layout()
+plt.savefig("cv_errors_final.png", dpi=300)
+plt.savefig("cv_errors_final.pdf")
+plt.close()
+############################################
+import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
+from matplotlib import colormaps
+
+# --------------------------
+# Step 1: Extract accessions from VCF
+# --------------------------
+vcf_file = "Sbic2groups_wild_cultivated_variants.v1.freebayes.filt.vcf"
+with open(vcf_file) as f:
+    for line in f:
+        if line.startswith("#CHROM"):
+            accession_names = line.strip().split("\t")[9:]
+            break
+
+# --------------------------
+# Step 2: Load K=3 and define fixed sorting order
+# --------------------------
+Q_ref = pd.read_csv("sbic_exPVP71_admixture_filtered.3.Q", sep=' ', header=None)
+Q_ref = Q_ref.dropna(axis=1, how='all')
+Q_ref.columns = ['Group1', 'Group2', 'Group3']
+Q_ref['Accession'] = accession_names
+Q_ref = Q_ref.set_index('Accession')
+
+# Determine dominant Group
+Q_ref['DominantGroup'] = Q_ref[['Group1', 'Group2', 'Group3']].idxmax(axis=1)
+
+# Sort within each Group by proportion to create wave
+order = []
+for i, Group in enumerate(['Group1', 'Group2', 'Group3']):
+    ascending = i % 2 != 0  # Alternate direction
+    sub = Q_ref[Q_ref['DominantGroup'] == Group].copy()
+    sub = sub.sort_values(by=Group, ascending=ascending)
+    order.extend(sub.index.tolist())
+
+# --------------------------
+# Step 3: Plot for K=2 to K=5 using fixed order
+# --------------------------
+fig, axes = plt.subplots(4, 1, figsize=(24, 10), sharex=True)
+colors = colormaps['tab20'].resampled(20).colors
+
+for idx, K in enumerate(range(2, 6)):
+    qfile = f"sbic_exPVP71_admixture_filtered.{K}.Q"
+    Q = pd.read_csv(qfile, sep=' ', header=None)
+    Q = Q.dropna(axis=1, how='all')
+    Q.columns = [f'Group{i+1}' for i in range(K)]
+
+    # Assign accession names
+    if Q.shape[0] != len(accession_names):
+        raise ValueError(f"Mismatch: Q rows = {Q.shape[0]} vs VCF samples = {len(accession_names)}")
+    Q['Accession'] = accession_names
+    Q = Q.set_index('Accession')
+
+    # Reorder using K=3 reference-based order
+    Q_sorted = Q.loc[order].reset_index()
+
+    # Plot stacked barplot
+    bottom = np.zeros(len(Q_sorted))
+    for i, Group in enumerate(Q.columns):
+        axes[idx].bar(Q_sorted['Accession'], Q_sorted[Group],
+              bottom=bottom, color=colors[i % len(colors)],
+              label=Group, width=1.0, align='edge')
+        bottom += Q_sorted[Group]
+
+    axes[idx].set_ylabel(f"K={K}", rotation=0, labelpad=40,
+                         fontsize=14, fontweight='bold', va='center')
+    axes[idx].legend(title='', bbox_to_anchor=(1.01, 1), loc='upper left', fontsize=10)
+    axes[idx].grid(True, axis='y', linestyle='--', linewidth=0.5, alpha=0.7)
+    axes[idx].set_yticks([0, 0.25, 0.5, 0.75, 1.0])
+    axes[idx].set_ylim(0, 1.0)
+    axes[idx].tick_params(axis='y', labelsize=8)
+    axes[idx].spines['top'].set_visible(False)
+    axes[idx].spines['right'].set_visible(False)
+
+# Hide x labels except bottom
+for ax in axes[:-1]:
+    ax.set_xticklabels([])
+
+axes[-1].set_xticks(range(len(Q_sorted)))
+axes[-1].set_xticklabels(Q_sorted['Accession'], rotation=90, fontsize=8, fontweight='bold')
+axes[-1].set_xlabel("Accessions (sorted by K=3 dominant Group)", fontsize=16, fontweight='bold')
+
+plt.tight_layout()
+plt.savefig("admixture_barplots_K2toK5_fixed_order_by_K3.png", dpi=300)
+plt.savefig("admixture_barplots_K2toK5_fixed_order_by_K3.pdf")
+plt.close()
+##############################################################################################
+##############################################################################################
+##################### selective sweeps analysis
+#####################
+##############################################################################################
+##############################################################################################
+#C:\Sorghum\2025\temp
+#/data1/jkitony/Sorghum/SNP_variants_2025_FINAL/temp/
+bcftools view -H -v snps Sbic_manuscript71.freebayes.SNPs.filtered.vcf | wc -l 
+#34035
+#FST: gunzip Sbic_manuscript71.freebayes.SNPs.filtered.vcf.gz
+
+conda activate variants
+# 1. Cultivated vs all wild
+vcftools --vcf Sbic_manuscript71.freebayes.SNPs.filtered.vcf \
+  --weir-fst-pop group2_exPVP.txt \
+  --weir-fst-pop group1_wild_all25.txt \
+  --fst-window-size 100000 --fst-window-step 10000 \
+  --out FST_exPVP_vs_wild_all
+#Weir and Cockerham mean Fst estimate: 0.209
+#Weir and Cockerham weighted Fst estimate: 0.33661
+
+# 2. Cultivated vs wild1
+vcftools --vcf Sbic_manuscript71.freebayes.SNPs.filtered.vcf \
+  --weir-fst-pop group2_exPVP.txt \
+  --weir-fst-pop group1_wild1.txt \
+  --fst-window-size 100000 --fst-window-step 10000 \
+  --out FST_exPVP_vs_wild1
+#Weir and Cockerham mean Fst estimate: 0.37117
+#Weir and Cockerham weighted Fst estimate: 0.52274
+
+# 3. Cultivated vs wild2
+vcftools --vcf Sbic_manuscript71.freebayes.SNPs.filtered.vcf \
+  --weir-fst-pop group2_exPVP.txt \
+  --weir-fst-pop group1_wild2.txt \
+  --fst-window-size 100000 --fst-window-step 10000 \
+  --out FST_exPVP_vs_wild2
+#Weir and Cockerham mean Fst estimate: 0.22729
+#Weir and Cockerham weighted Fst estimate: 0.36011
+
+# 4. Wild1 vs wild2
+vcftools --vcf Sbic_manuscript71.freebayes.SNPs.filtered.vcf \
+  --weir-fst-pop group1_wild1.txt \
+  --weir-fst-pop group1_wild2.txt \
+  --fst-window-size 100000 --fst-window-step 10000 \
+  --out FST_wild1_vs_wild2
+#Weir and Cockerham mean Fst estimate: 0.11025
+#Weir and Cockerham weighted Fst estimate: 0.14791
+
+
+#######################################
+#B. Nucleotide diversity (π) for π-ratio
+# Cultivated
+vcftools --vcf Sbic_manuscript71.freebayes.SNPs.filtered.vcf \
+  --keep group2_exPVP.txt \
+  --window-pi 100000 --window-pi-step 10000 \
+  --out PI_exPVP
+#kept 46 out of 71 Individuals
+
+# Wild all
+vcftools --vcf Sbic_manuscript71.freebayes.SNPs.filtered.vcf \
+  --keep group1_wild_all25.txt \
+  --window-pi 100000 --window-pi-step 10000 \
+  --out PI_wild_all
+#kept 25 out of 71 Individuals
+
+# Wild 1
+vcftools --vcf Sbic_manuscript71.freebayes.SNPs.filtered.vcf \
+  --keep group1_wild1.txt \
+  --window-pi 100000 --window-pi-step 10000 \
+  --out PI_wild1
+#kept 11 out of 71 Individuals
+
+# Wild 2
+vcftools --vcf Sbic_manuscript71.freebayes.SNPs.filtered.vcf \
+  --keep group1_wild2.txt \
+  --window-pi 100000 --window-pi-step 10000 \
+  --out PI_wild2
+#kept 14 out of 71 Individuals
+
+#######################################
+# 1. Cultivated vs all wild
+mkdir -p XPCLR_exPVP_vs_wild_all
+for chr in {1..10}; do
+  xpclr \
+    --input Sbic_manuscript71.freebayes.SNPs.filtered.vcf \
+    --out XPCLR_exPVP_vs_wild_all/XPCLR_${chr}.xpclr \
+    --samplesA group2_exPVP.txt \
+    --samplesB group1_wild_all25.txt \
+    --chr $chr \
+    --size 100000 \
+    --step 10000 \
+    --maxsnps 300 \
+    --minsnps 5 \
+    --rrate 1e-8 &
+done
+wait
+cat XPCLR_exPVP_vs_wild_all/XPCLR_*.xpclr > XPCLR_exPVP_vs_wild_all.txt
+
+# 2. Cultivated vs wild1
+mkdir -p XPCLR_exPVP_vs_wild1
+for chr in {1..10}; do
+  xpclr \
+    --input Sbic_manuscript71.freebayes.SNPs.filtered.vcf \
+    --out XPCLR_exPVP_vs_wild1/XPCLR_${chr}.xpclr \
+    --samplesA group2_exPVP.txt \
+    --samplesB group1_wild1.txt \
+    --chr $chr \
+    --size 100000 \
+    --step 10000 \
+    --maxsnps 300 \
+    --minsnps 5 \
+    --rrate 1e-8 &
+done
+wait
+cat XPCLR_exPVP_vs_wild1/XPCLR_*.xpclr > XPCLR_exPVP_vs_wild1.txt
+
+# 3. Cultivated vs wild2
+mkdir -p XPCLR_exPVP_vs_wild2
+for chr in {1..10}; do
+  xpclr \
+    --input Sbic_manuscript71.freebayes.SNPs.filtered.vcf \
+    --out XPCLR_exPVP_vs_wild2/XPCLR_${chr}.xpclr \
+    --samplesA group2_exPVP.txt \
+    --samplesB group1_wild2.txt \
+    --chr $chr \
+    --size 100000 \
+    --step 10000 \
+    --maxsnps 300 \
+    --minsnps 5 \
+    --rrate 1e-8 &
+done
+wait
+cat XPCLR_exPVP_vs_wild2/XPCLR_*.xpclr > XPCLR_exPVP_vs_wild2.txt
+
+# 4. Wild1 vs wild2
+mkdir -p XPCLR_wild1_vs_wild2
+for chr in {1..10}; do
+  xpclr \
+    --input Sbic_manuscript71.freebayes.SNPs.filtered.vcf \
+    --out XPCLR_wild1_vs_wild2/XPCLR_${chr}.xpclr \
+    --samplesA group1_wild1.txt \
+    --samplesB group1_wild2.txt \
+    --chr $chr \
+    --size 100000 \
+    --step 10000 \
+    --maxsnps 300 \
+    --minsnps 5 \
+    --rrate 1e-8 &
+done
+wait
+cat XPCLR_wild1_vs_wild2/XPCLR_*.xpclr > XPCLR_wild1_vs_wild2.txt
+#####################################################################
+#Plot
+# 1. Cultivated vs all 25 wild
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from cyvcf2 import VCF
+from re import sub
+from scipy.ndimage import uniform_filter1d
+from matplotlib.lines import Line2D
+
+# --- Plotting style ---
+plt.rcParams.update({
+    'font.size': 12,
+    'axes.labelweight': 'bold',
+    'axes.titlesize': 16,
+    'axes.titleweight': 'bold',
+    'xtick.labelsize': 11,
+    'ytick.labelsize': 11,
+    'axes.labelsize': 14,
+    'font.weight': 'bold'
+})
+
+# --- Chromosomes 1–10 ---
+chrom_order = [str(i) for i in range(1, 11)]
+chrom_order_cat = pd.CategoricalDtype(categories=chrom_order, ordered=True)
+
+# --- Load XP-CLR ---
+xpclr = pd.read_csv("XPCLR_exPVP_vs_wild_all.txt", sep='\s+')[["chrom", "start", "stop", "xpclr"]]
+xpclr.columns = ["CHR", "START", "END", "XPCLR_SCORE"]
+xpclr["CHR"] = xpclr["CHR"].astype(str).str.lstrip("Chrchr").str.lstrip("0")
+xpclr = xpclr[xpclr["CHR"].isin(chrom_order)].copy()
+xpclr["CHR"] = xpclr["CHR"].astype(chrom_order_cat)
+xpclr.dropna(inplace=True)
+
+# --- Load FST ---
+fst = pd.read_csv("FST_exPVP_vs_wild_all.windowed.weir.fst", sep='\s+')
+fst = fst.rename(columns={"CHROM": "CHR", "BIN_START": "START", "WEIGHTED_FST": "FST"})
+fst["CHR"] = fst["CHR"].astype(str).str.lstrip("Chrchr").str.lstrip("0")
+fst = fst[fst["CHR"].isin(chrom_order)].copy()
+fst["CHR"] = fst["CHR"].astype(chrom_order_cat)
+fst.dropna(inplace=True)
+
+# --- π-ratio ---
+pi1 = pd.read_csv("PI_exPVP.windowed.pi", sep='\s+').rename(columns={"CHROM": "CHR", "BIN_START": "START", "PI": "PI1"})
+pi2 = pd.read_csv("PI_wild_all.windowed.pi", sep='\s+').rename(columns={"CHROM": "CHR", "BIN_START": "START", "PI": "PI2"})
+pi1["CHR"] = pi1["CHR"].astype(str).str.lstrip("Chrchr").str.lstrip("0")
+pi2["CHR"] = pi2["CHR"].astype(str).str.lstrip("Chrchr").str.lstrip("0")
+pi = pi1.merge(pi2, on=["CHR", "START"])
+pi = pi[pi["CHR"].isin(chrom_order)].copy()
+pi["CHR"] = pi["CHR"].astype(chrom_order_cat)
+pi["PI_RATIO"] = pi["PI1"] / pi["PI2"]
+pi.dropna(inplace=True)
+
+# --- Load SVs from 3 VCFs (DEL only) ---
+def load_sv_data(vcf_path, label, color, ypos):
+    vcf = VCF(vcf_path)
+    records = []
+    for record in vcf:
+        if record.INFO.get("SVTYPE") == "DEL":
+            chrom_clean = sub(r"^Chr|chr", "", str(record.CHROM)).lstrip("0")
+            if chrom_clean in chrom_order:
+                records.append({
+                    "CHR": chrom_clean,
+                    "START": record.POS,
+                    "END": record.INFO.get("END", record.end),
+                    "LABEL": label,
+                    "COLOR": color,
+                    "YPOS": ypos
+                })
+    return pd.DataFrame(records)
+
+sv_expvp = load_sv_data("ExPVP_PI543243.svim.vcf.gz", "ExPVP SV", "red", 1.2)
+sv_wild1 = load_sv_data("Wild_PI156549_HAP1.svim.vcf.gz", "Wild Hap1 SV", "blue", 1.0)
+sv_wild2 = load_sv_data("Wild_PI156549_HAP2.svim.vcf.gz", "Wild Hap2 SV", "green", 0.8)
+sv_all = pd.concat([sv_expvp, sv_wild1, sv_wild2], ignore_index=True)
+sv_all["CHR"] = sv_all["CHR"].astype(str)
+
+# --- Compute cumulative positions ---
+fst = fst.sort_values(["CHR", "START"])
+chr_offsets = fst.groupby("CHR", observed=True)["START"].max().cumsum().shift(fill_value=0).to_dict()
+chr_offsets = {str(k): v for k, v in chr_offsets.items()}
+
+# Apply offsets
+for df, pos_col in [(fst, "START"), (xpclr, "START"), (pi, "START"), (sv_all, "START")]:
+    df[pos_col] = pd.to_numeric(df[pos_col], errors="coerce")
+    df["CHR"] = df["CHR"].astype(str)
+    df["CUMUL_POS"] = df.apply(lambda row: row[pos_col] + chr_offsets.get(row["CHR"], 0), axis=1)
+
+sv_all["END"] = pd.to_numeric(sv_all["END"], errors="coerce")
+sv_all["CUMUL_END"] = sv_all.apply(lambda row: row["END"] + chr_offsets.get(row["CHR"], 0), axis=1)
+
+# --- Thresholds ---
+xpclr["XPCLR_SCORE"] = pd.to_numeric(xpclr["XPCLR_SCORE"], errors="coerce")
+xpclr_thresh = xpclr["XPCLR_SCORE"].quantile(0.99)
+pi["PI_RATIO"] = pd.to_numeric(pi["PI_RATIO"], errors="coerce")
+pi_thresh = 0.5
+
+# --- X-axis ticks ---
+xticks = []
+xlabels = []
+for c in chrom_order:
+    if c in chr_offsets:
+        mid = chr_offsets[c] + fst[fst["CHR"] == c]["START"].max() // 2
+        xticks.append(mid)
+        xlabels.append(f"Chr{c.zfill(2)}")
+
+# --- Plot setup ---
+fig, axes = plt.subplots(4, 1, figsize=(20, 14), sharex=True,
+                         height_ratios=[2, 2, 2, 0.7], gridspec_kw={'hspace': 0.05})
+
+# --- FST plot with trendline ---
+fst["FST_smooth"] = uniform_filter1d(fst["FST"], size=10)
+sns.scatterplot(data=fst, x="CUMUL_POS", y="FST", ax=axes[0], color="darkorange", s=30)
+sns.lineplot(data=fst, x="CUMUL_POS", y="FST_smooth", ax=axes[0], color="black", linewidth=1)
+axes[0].set_ylim(0, 1.05)
+axes[0].set_ylabel("FST")
+axes[0].set_title("Genome-wide FST, π-Ratio, XP-CLR and SVs - ExPVP vs Wild")
+
+# --- π-ratio ---
+sns.scatterplot(data=pi, x="CUMUL_POS", y="PI_RATIO", ax=axes[1], color="green", s=30)
+axes[1].axhline(pi_thresh, color="black", linestyle="--", label="π-ratio < 0.5")
+axes[1].set_ylim(0, pi["PI_RATIO"].quantile(0.99) * 1.2)
+axes[1].set_ylabel("π-Ratio")
+
+# --- XP-CLR ---
+sns.scatterplot(data=xpclr, x="CUMUL_POS", y="XPCLR_SCORE", ax=axes[2], color="steelblue", s=30)
+axes[2].axhline(xpclr_thresh, color="red", linestyle="--", label="Top 1% XP-CLR")
+axes[2].set_ylim(0, xpclr["XPCLR_SCORE"].quantile(0.995) * 1.2)
+axes[2].set_ylabel("XP-CLR")
+
+# --- SV multi-track plot ---
+axes[3].set_ylim(0.7, 1.3)
+axes[3].set_yticks([1.2, 1.0, 0.8])
+axes[3].set_yticklabels(["ExPVP SV", "Wild Hap1 SV", "Wild Hap2 SV"])
+
+for _, row in sv_all.iterrows():
+    axes[3].hlines(y=row["YPOS"], xmin=row["CUMUL_POS"], xmax=row["CUMUL_END"], 
+                   color=row["COLOR"], linewidth=5)
+
+axes[3].set_xlabel("Chromosome")
+axes[3].set_xticks(xticks)
+axes[3].set_xticklabels(xlabels, fontweight="bold")
+
+# --- Chromosome boundaries ---
+for ax in axes:
+    for offset in chr_offsets.values():
+        ax.axvline(x=offset, color="gray", linestyle="--", linewidth=0.5)
+
+# --- Save ---
+fig.set_constrained_layout(True)
+plt.savefig("genomewide_xpclr_fst_pi_sv_thresholds_exPVP_wild_all_updated.png", dpi=300)
+plt.savefig("genomewide_xpclr_fst_pi_sv_thresholds_exPVP_wild_all_updated.pdf", bbox_inches="tight")
+plt.show()
+#####################################################################
+# 2. Cultivated vs wild1
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from cyvcf2 import VCF
+from re import sub
+from scipy.ndimage import uniform_filter1d
+
+# --- Plotting style ---
+plt.rcParams.update({
+    'font.size': 12,
+    'axes.labelweight': 'bold',
+    'axes.titlesize': 16,
+    'axes.titleweight': 'bold',
+    'xtick.labelsize': 11,
+    'ytick.labelsize': 11,
+    'axes.labelsize': 14,
+    'font.weight': 'bold'
+})
+
+# --- Chromosomes 1–10 ---
+chrom_order = [str(i) for i in range(1, 11)]
+chrom_order_cat = pd.CategoricalDtype(categories=chrom_order, ordered=True)
+
+# --- Load XP-CLR ---
+xpclr = pd.read_csv("XPCLR_exPVP_vs_wild1.txt", sep='\s+')[["chrom", "start", "stop", "xpclr"]]
+xpclr.columns = ["CHR", "START", "END", "XPCLR_SCORE"]
+xpclr["CHR"] = xpclr["CHR"].astype(str).str.lstrip("Chrchr").str.lstrip("0")
+xpclr = xpclr[xpclr["CHR"].isin(chrom_order)].copy()
+xpclr["CHR"] = xpclr["CHR"].astype(chrom_order_cat)
+xpclr.dropna(inplace=True)
+
+# --- Load FST ---
+fst = pd.read_csv("FST_exPVP_vs_wild1.windowed.weir.fst", sep='\s+')
+fst = fst.rename(columns={"CHROM": "CHR", "BIN_START": "START", "WEIGHTED_FST": "FST"})
+fst["CHR"] = fst["CHR"].astype(str).str.lstrip("Chrchr").str.lstrip("0")
+fst = fst[fst["CHR"].isin(chrom_order)].copy()
+fst["CHR"] = fst["CHR"].astype(chrom_order_cat)
+fst.dropna(inplace=True)
+
+# --- π-ratio ---
+pi1 = pd.read_csv("PI_exPVP.windowed.pi", sep='\s+').rename(columns={"CHROM": "CHR", "BIN_START": "START", "PI": "PI1"})
+pi2 = pd.read_csv("PI_wild1.windowed.pi", sep='\s+').rename(columns={"CHROM": "CHR", "BIN_START": "START", "PI": "PI2"})
+pi1["CHR"] = pi1["CHR"].astype(str).str.lstrip("Chrchr").str.lstrip("0")
+pi2["CHR"] = pi2["CHR"].astype(str).str.lstrip("Chrchr").str.lstrip("0")
+pi = pi1.merge(pi2, on=["CHR", "START"])
+pi = pi[pi["CHR"].isin(chrom_order)].copy()
+pi["CHR"] = pi["CHR"].astype(chrom_order_cat)
+pi["PI_RATIO"] = pi["PI1"] / pi["PI2"]
+pi.dropna(inplace=True)
+
+# --- SVs (DEL only) ---
+vcf = VCF("ExPVP_PI543243.svim.vcf.gz")
+sv_records = []
+for record in vcf:
+    if record.INFO.get("SVTYPE") == "DEL":
+        chrom_clean = sub(r"^Chr|chr", "", str(record.CHROM)).lstrip("0")
+        if chrom_clean in chrom_order:
+            sv_records.append({
+                "CHR": chrom_clean,
+                "START": record.POS,
+                "END": record.INFO.get("END", record.end)
+            })
+sv_df = pd.DataFrame(sv_records)
+sv_df["CHR"] = sv_df["CHR"].astype(str)
+
+# --- Compute cumulative positions ---
+fst = fst.sort_values(["CHR", "START"])
+chr_offsets = fst.groupby("CHR", observed=True)["START"].max().cumsum().shift(fill_value=0).to_dict()
+chr_offsets = {str(k): v for k, v in chr_offsets.items()}
+
+# Apply offsets safely
+for df, pos_col in [(fst, "START"), (xpclr, "START"), (pi, "START"), (sv_df, "START")]:
+    df[pos_col] = pd.to_numeric(df[pos_col], errors="coerce")
+    df["CHR"] = df["CHR"].astype(str)
+    df["CUMUL_POS"] = df.apply(lambda row: row[pos_col] + chr_offsets.get(row["CHR"], 0), axis=1)
+
+sv_df["END"] = pd.to_numeric(sv_df["END"], errors="coerce")
+sv_df["CUMUL_END"] = sv_df.apply(lambda row: row["END"] + chr_offsets.get(row["CHR"], 0), axis=1)
+
+# --- Thresholds ---
+xpclr["XPCLR_SCORE"] = pd.to_numeric(xpclr["XPCLR_SCORE"], errors="coerce")
+xpclr_thresh = xpclr["XPCLR_SCORE"].quantile(0.99)
+pi["PI_RATIO"] = pd.to_numeric(pi["PI_RATIO"], errors="coerce")
+pi_thresh = 0.5
+
+# --- X-axis ticks ---
+xticks = []
+xlabels = []
+for c in chrom_order:
+    if c in chr_offsets:
+        mid = chr_offsets[c] + fst[fst["CHR"] == c]["START"].max() // 2
+        xticks.append(mid)
+        xlabels.append(f"Chr{c.zfill(2)}")
+
+# --- Plot setup ---
+fig, axes = plt.subplots(4, 1, figsize=(20, 14), sharex=True,
+                         height_ratios=[2, 2, 2, 0.7], gridspec_kw={'hspace': 0.05})
+
+# --- FST plot with trendline ---
+fst["FST_smooth"] = uniform_filter1d(fst["FST"], size=10)
+sns.scatterplot(data=fst, x="CUMUL_POS", y="FST", ax=axes[0], color="darkorange", s=30)
+sns.lineplot(data=fst, x="CUMUL_POS", y="FST_smooth", ax=axes[0], color="black", linewidth=1)
+axes[0].set_ylim(0, 1.05)
+axes[0].set_ylabel("FST")
+axes[0].set_title("Genome-wide FST, π-Ratio, XP-CLR and SVs - exPVP vs Wild1")
+
+# --- π-ratio ---
+sns.scatterplot(data=pi, x="CUMUL_POS", y="PI_RATIO", ax=axes[1], color="green", s=30)
+axes[1].axhline(pi_thresh, color="black", linestyle="--", label="π-ratio < 0.5")
+axes[1].set_ylim(0, pi["PI_RATIO"].quantile(0.99) * 1.2)
+axes[1].set_ylabel("π-Ratio")
+
+# --- XP-CLR ---
+sns.scatterplot(data=xpclr, x="CUMUL_POS", y="XPCLR_SCORE", ax=axes[2], color="steelblue", s=30)
+axes[2].axhline(xpclr_thresh, color="red", linestyle="--", label="Top 1% XP-CLR")
+axes[2].set_ylim(0, xpclr["XPCLR_SCORE"].quantile(0.995) * 1.2)
+axes[2].set_ylabel("XP-CLR")
+
+# --- SV track ---
+axes[3].set_ylim(0.8, 1.2)
+axes[3].set_yticks([1])
+axes[3].set_yticklabels(["SV"])
+for _, row in sv_df.iterrows():
+    axes[3].hlines(y=1, xmin=row["CUMUL_POS"], xmax=row["CUMUL_END"], color="red", linewidth=6)
+axes[3].set_xlabel("Chromosome")
+axes[3].set_xticks(xticks)
+axes[3].set_xticklabels(xlabels, fontweight="bold")
+
+# --- Chromosome boundaries ---
+for ax in axes:
+    for offset in chr_offsets.values():
+        ax.axvline(x=offset, color="gray", linestyle="--", linewidth=0.5)
+
+# --- Save ---
+fig.set_constrained_layout(True)
+plt.savefig("genomewide_xpclr_fst_pi_sv_thresholds_exPVP_wild1.png", dpi=300)
+plt.savefig("genomewide_xpclr_fst_pi_sv_thresholds_exPVP_wild1.pdf", bbox_inches="tight")
+plt.show()
+#####################################################################
+# 3. Cultivated vs wild2
+# 3. ExPVP vs wild2
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from cyvcf2 import VCF
+from re import sub
+from scipy.ndimage import uniform_filter1d
+from matplotlib.lines import Line2D
+
+# --- Plotting style ---
+plt.rcParams.update({
+    'font.size': 12,
+    'axes.labelweight': 'bold',
+    'axes.titlesize': 16,
+    'axes.titleweight': 'bold',
+    'xtick.labelsize': 11,
+    'ytick.labelsize': 11,
+    'axes.labelsize': 14,
+    'font.weight': 'bold'
+})
+
+# --- Chromosomes 1–10 ---
+chrom_order = [str(i) for i in range(1, 11)]
+chrom_order_cat = pd.CategoricalDtype(categories=chrom_order, ordered=True)
+
+# --- Load XP-CLR ---
+xpclr = pd.read_csv("XPCLR_exPVP_vs_wild2.txt", sep='\s+')[["chrom", "start", "stop", "xpclr"]]
+xpclr.columns = ["CHR", "START", "END", "XPCLR_SCORE"]
+xpclr["CHR"] = xpclr["CHR"].astype(str).str.lstrip("Chrchr").str.lstrip("0")
+xpclr = xpclr[xpclr["CHR"].isin(chrom_order)].copy()
+xpclr["CHR"] = xpclr["CHR"].astype(chrom_order_cat)
+xpclr.dropna(inplace=True)
+
+# --- Load FST ---
+fst = pd.read_csv("FST_exPVP_vs_wild2.windowed.weir.fst", sep='\s+')
+fst = fst.rename(columns={"CHROM": "CHR", "BIN_START": "START", "WEIGHTED_FST": "FST"})
+fst["CHR"] = fst["CHR"].astype(str).str.lstrip("Chrchr").str.lstrip("0")
+fst = fst[fst["CHR"].isin(chrom_order)].copy()
+fst["CHR"] = fst["CHR"].astype(chrom_order_cat)
+fst.dropna(inplace=True)
+
+# --- π-ratio ---
+pi1 = pd.read_csv("PI_exPVP.windowed.pi", sep='\s+').rename(columns={"CHROM": "CHR", "BIN_START": "START", "PI": "PI1"})
+pi2 = pd.read_csv("PI_wild2.windowed.pi", sep='\s+').rename(columns={"CHROM": "CHR", "BIN_START": "START", "PI": "PI2"})
+pi1["CHR"] = pi1["CHR"].astype(str).str.lstrip("Chrchr").str.lstrip("0")
+pi2["CHR"] = pi2["CHR"].astype(str).str.lstrip("Chrchr").str.lstrip("0")
+pi = pi1.merge(pi2, on=["CHR", "START"])
+pi = pi[pi["CHR"].isin(chrom_order)].copy()
+pi["CHR"] = pi["CHR"].astype(chrom_order_cat)
+pi["PI_RATIO"] = pi["PI1"] / pi["PI2"]
+pi.dropna(inplace=True)
+
+# --- Load SVs from 3 VCFs (DEL only) ---
+def load_sv_data(vcf_path, label, color, ypos):
+    vcf = VCF(vcf_path)
+    records = []
+    for record in vcf:
+        if record.INFO.get("SVTYPE") == "DEL":
+            chrom_clean = sub(r"^Chr|chr", "", str(record.CHROM)).lstrip("0")
+            if chrom_clean in chrom_order:
+                records.append({
+                    "CHR": chrom_clean,
+                    "START": record.POS,
+                    "END": record.INFO.get("END", record.end),
+                    "LABEL": label,
+                    "COLOR": color,
+                    "YPOS": ypos
+                })
+    return pd.DataFrame(records)
+
+sv_expvp = load_sv_data("ExPVP_PI543243.svim.vcf.gz", "ExPVP SV", "red", 1.2)
+sv_wild1 = load_sv_data("Wild_PI156549_HAP1.svim.vcf.gz", "Wild Hap1 SV", "blue", 1.0)
+sv_wild2 = load_sv_data("Wild_PI156549_HAP2.svim.vcf.gz", "Wild Hap2 SV", "green", 0.8)
+sv_all = pd.concat([sv_expvp, sv_wild1, sv_wild2], ignore_index=True)
+sv_all["CHR"] = sv_all["CHR"].astype(str)
+
+# --- Compute cumulative positions ---
+fst = fst.sort_values(["CHR", "START"])
+chr_offsets = fst.groupby("CHR", observed=True)["START"].max().cumsum().shift(fill_value=0).to_dict()
+chr_offsets = {str(k): v for k, v in chr_offsets.items()}
+
+# Apply offsets
+for df, pos_col in [(fst, "START"), (xpclr, "START"), (pi, "START"), (sv_all, "START")]:
+    df[pos_col] = pd.to_numeric(df[pos_col], errors="coerce")
+    df["CHR"] = df["CHR"].astype(str)
+    df["CUMUL_POS"] = df.apply(lambda row: row[pos_col] + chr_offsets.get(row["CHR"], 0), axis=1)
+
+sv_all["END"] = pd.to_numeric(sv_all["END"], errors="coerce")
+sv_all["CUMUL_END"] = sv_all.apply(lambda row: row["END"] + chr_offsets.get(row["CHR"], 0), axis=1)
+
+# --- Thresholds ---
+xpclr["XPCLR_SCORE"] = pd.to_numeric(xpclr["XPCLR_SCORE"], errors="coerce")
+xpclr_thresh = xpclr["XPCLR_SCORE"].quantile(0.99)
+pi["PI_RATIO"] = pd.to_numeric(pi["PI_RATIO"], errors="coerce")
+pi_thresh = 0.5
+
+# --- X-axis ticks ---
+xticks = []
+xlabels = []
+for c in chrom_order:
+    if c in chr_offsets:
+        mid = chr_offsets[c] + fst[fst["CHR"] == c]["START"].max() // 2
+        xticks.append(mid)
+        xlabels.append(f"Chr{c.zfill(2)}")
+
+# --- Plot setup ---
+fig, axes = plt.subplots(4, 1, figsize=(20, 14), sharex=True,
+                         height_ratios=[2, 2, 2, 0.7], gridspec_kw={'hspace': 0.05})
+
+# --- FST plot with trendline ---
+fst["FST_smooth"] = uniform_filter1d(fst["FST"], size=10)
+sns.scatterplot(data=fst, x="CUMUL_POS", y="FST", ax=axes[0], color="darkorange", s=30)
+sns.lineplot(data=fst, x="CUMUL_POS", y="FST_smooth", ax=axes[0], color="black", linewidth=1)
+axes[0].set_ylim(0, 1.05)
+axes[0].set_ylabel("FST")
+axes[0].set_title("Genome-wide FST, π-Ratio, XP-CLR and SVs - ExPVP vs Wild2")
+
+# --- π-ratio ---
+sns.scatterplot(data=pi, x="CUMUL_POS", y="PI_RATIO", ax=axes[1], color="green", s=30)
+axes[1].axhline(pi_thresh, color="black", linestyle="--", label="π-ratio < 0.5")
+axes[1].set_ylim(0, pi["PI_RATIO"].quantile(0.99) * 1.2)
+axes[1].set_ylabel("π-Ratio")
+
+# --- XP-CLR ---
+sns.scatterplot(data=xpclr, x="CUMUL_POS", y="XPCLR_SCORE", ax=axes[2], color="steelblue", s=30)
+axes[2].axhline(xpclr_thresh, color="red", linestyle="--", label="Top 1% XP-CLR")
+axes[2].set_ylim(0, xpclr["XPCLR_SCORE"].quantile(0.995) * 1.2)
+axes[2].set_ylabel("XP-CLR")
+
+# --- SV multi-track plot ---
+axes[3].set_ylim(0.7, 1.3)
+axes[3].set_yticks([1.2, 1.0, 0.8])
+axes[3].set_yticklabels(["ExPVP SV", "Wild Hap1 SV", "Wild Hap2 SV"])
+
+for _, row in sv_all.iterrows():
+    axes[3].hlines(y=row["YPOS"], xmin=row["CUMUL_POS"], xmax=row["CUMUL_END"], 
+                   color=row["COLOR"], linewidth=5)
+
+axes[3].set_xlabel("Chromosome")
+axes[3].set_xticks(xticks)
+axes[3].set_xticklabels(xlabels, fontweight="bold")
+
+# --- Chromosome boundaries ---
+for ax in axes:
+    for offset in chr_offsets.values():
+        ax.axvline(x=offset, color="gray", linestyle="--", linewidth=0.5)
+
+# --- Save ---
+fig.set_constrained_layout(True)
+plt.savefig("genomewide_xpclr_fst_pi_sv_thresholds_exPVP_wild2_updated.png", dpi=300)
+plt.savefig("genomewide_xpclr_fst_pi_sv_thresholds_exPVP_wild2_updated.pdf", bbox_inches="tight")
+plt.show()
+#####################################################################
+# 4. Wild1 vs wild2
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from cyvcf2 import VCF
+from re import sub
+from scipy.ndimage import uniform_filter1d
+from matplotlib.lines import Line2D
+
+# --- Plotting style ---
+plt.rcParams.update({
+    'font.size': 12,
+    'axes.labelweight': 'bold',
+    'axes.titlesize': 16,
+    'axes.titleweight': 'bold',
+    'xtick.labelsize': 11,
+    'ytick.labelsize': 11,
+    'axes.labelsize': 14,
+    'font.weight': 'bold'
+})
+
+# --- Chromosomes 1–10 ---
+chrom_order = [str(i) for i in range(1, 11)]
+chrom_order_cat = pd.CategoricalDtype(categories=chrom_order, ordered=True)
+
+# --- Load XP-CLR ---
+xpclr = pd.read_csv("XPCLR_wild1_vs_wild2.txt", sep='\s+')[["chrom", "start", "stop", "xpclr"]]
+xpclr.columns = ["CHR", "START", "END", "XPCLR_SCORE"]
+xpclr["CHR"] = xpclr["CHR"].astype(str).str.lstrip("Chrchr").str.lstrip("0")
+xpclr = xpclr[xpclr["CHR"].isin(chrom_order)].copy()
+xpclr["CHR"] = xpclr["CHR"].astype(chrom_order_cat)
+xpclr.dropna(inplace=True)
+
+# --- Load FST ---
+fst = pd.read_csv("FST_wild1_vs_wild2.windowed.weir.fst", sep='\s+')
+fst = fst.rename(columns={"CHROM": "CHR", "BIN_START": "START", "WEIGHTED_FST": "FST"})
+fst["CHR"] = fst["CHR"].astype(str).str.lstrip("Chrchr").str.lstrip("0")
+fst = fst[fst["CHR"].isin(chrom_order)].copy()
+fst["CHR"] = fst["CHR"].astype(chrom_order_cat)
+fst.dropna(inplace=True)
+
+# --- π-ratio ---
+pi1 = pd.read_csv("PI_wild1.windowed.pi", sep='\s+').rename(columns={"CHROM": "CHR", "BIN_START": "START", "PI": "PI1"})
+pi2 = pd.read_csv("PI_wild2.windowed.pi", sep='\s+').rename(columns={"CHROM": "CHR", "BIN_START": "START", "PI": "PI2"})
+pi1["CHR"] = pi1["CHR"].astype(str).str.lstrip("Chrchr").str.lstrip("0")
+pi2["CHR"] = pi2["CHR"].astype(str).str.lstrip("Chrchr").str.lstrip("0")
+pi = pi1.merge(pi2, on=["CHR", "START"])
+pi = pi[pi["CHR"].isin(chrom_order)].copy()
+pi["CHR"] = pi["CHR"].astype(chrom_order_cat)
+pi["PI_RATIO"] = pi["PI1"] / pi["PI2"]
+pi.dropna(inplace=True)
+
+# --- Load SVs from 3 VCFs (DEL only) ---
+def load_sv_data(vcf_path, label, color, ypos):
+    vcf = VCF(vcf_path)
+    records = []
+    for record in vcf:
+        if record.INFO.get("SVTYPE") == "DEL":
+            chrom_clean = sub(r"^Chr|chr", "", str(record.CHROM)).lstrip("0")
+            if chrom_clean in chrom_order:
+                records.append({
+                    "CHR": chrom_clean,
+                    "START": record.POS,
+                    "END": record.INFO.get("END", record.end),
+                    "LABEL": label,
+                    "COLOR": color,
+                    "YPOS": ypos
+                })
+    return pd.DataFrame(records)
+
+sv_expvp = load_sv_data("ExPVP_PI543243.svim.vcf.gz", "ExPVP SV", "red", 1.2)
+sv_wild1 = load_sv_data("Wild_PI156549_HAP1.svim.vcf.gz", "Wild Hap1 SV", "blue", 1.0)
+sv_wild2 = load_sv_data("Wild_PI156549_HAP2.svim.vcf.gz", "Wild Hap2 SV", "green", 0.8)
+sv_all = pd.concat([sv_expvp, sv_wild1, sv_wild2], ignore_index=True)
+sv_all["CHR"] = sv_all["CHR"].astype(str)
+
+# --- Compute cumulative positions ---
+fst = fst.sort_values(["CHR", "START"])
+chr_offsets = fst.groupby("CHR", observed=True)["START"].max().cumsum().shift(fill_value=0).to_dict()
+chr_offsets = {str(k): v for k, v in chr_offsets.items()}
+
+# Apply offsets
+for df, pos_col in [(fst, "START"), (xpclr, "START"), (pi, "START"), (sv_all, "START")]:
+    df[pos_col] = pd.to_numeric(df[pos_col], errors="coerce")
+    df["CHR"] = df["CHR"].astype(str)
+    df["CUMUL_POS"] = df.apply(lambda row: row[pos_col] + chr_offsets.get(row["CHR"], 0), axis=1)
+
+sv_all["END"] = pd.to_numeric(sv_all["END"], errors="coerce")
+sv_all["CUMUL_END"] = sv_all.apply(lambda row: row["END"] + chr_offsets.get(row["CHR"], 0), axis=1)
+
+# --- Thresholds ---
+xpclr["XPCLR_SCORE"] = pd.to_numeric(xpclr["XPCLR_SCORE"], errors="coerce")
+xpclr_thresh = xpclr["XPCLR_SCORE"].quantile(0.99)
+pi["PI_RATIO"] = pd.to_numeric(pi["PI_RATIO"], errors="coerce")
+pi_thresh = 0.5
+
+# --- X-axis ticks ---
+xticks = []
+xlabels = []
+for c in chrom_order:
+    if c in chr_offsets:
+        mid = chr_offsets[c] + fst[fst["CHR"] == c]["START"].max() // 2
+        xticks.append(mid)
+        xlabels.append(f"Chr{c.zfill(2)}")
+
+# --- Plot setup ---
+fig, axes = plt.subplots(4, 1, figsize=(20, 14), sharex=True,
+                         height_ratios=[2, 2, 2, 0.7], gridspec_kw={'hspace': 0.05})
+
+# --- FST plot with trendline ---
+fst["FST_smooth"] = uniform_filter1d(fst["FST"], size=10)
+sns.scatterplot(data=fst, x="CUMUL_POS", y="FST", ax=axes[0], color="darkorange", s=30)
+sns.lineplot(data=fst, x="CUMUL_POS", y="FST_smooth", ax=axes[0], color="black", linewidth=1)
+axes[0].set_ylim(0, 1.05)
+axes[0].set_ylabel("FST")
+axes[0].set_title("Genome-wide FST, π-Ratio, XP-CLR and SVs - Wild1 vs Wild2")
+
+# --- π-ratio ---
+sns.scatterplot(data=pi, x="CUMUL_POS", y="PI_RATIO", ax=axes[1], color="green", s=30)
+axes[1].axhline(pi_thresh, color="black", linestyle="--", label="π-ratio < 0.5")
+axes[1].set_ylim(0, pi["PI_RATIO"].quantile(0.99) * 1.2)
+axes[1].set_ylabel("π-Ratio")
+
+# --- XP-CLR ---
+sns.scatterplot(data=xpclr, x="CUMUL_POS", y="XPCLR_SCORE", ax=axes[2], color="steelblue", s=30)
+axes[2].axhline(xpclr_thresh, color="red", linestyle="--", label="Top 1% XP-CLR")
+axes[2].set_ylim(0, xpclr["XPCLR_SCORE"].quantile(0.995) * 1.2)
+axes[2].set_ylabel("XP-CLR")
+
+# --- SV multi-track plot ---
+axes[3].set_ylim(0.7, 1.3)
+axes[3].set_yticks([1.2, 1.0, 0.8])
+axes[3].set_yticklabels(["ExPVP SV", "Wild Hap1 SV", "Wild Hap2 SV"])
+
+for _, row in sv_all.iterrows():
+    axes[3].hlines(y=row["YPOS"], xmin=row["CUMUL_POS"], xmax=row["CUMUL_END"], 
+                   color=row["COLOR"], linewidth=5)
+
+axes[3].set_xlabel("Chromosome")
+axes[3].set_xticks(xticks)
+axes[3].set_xticklabels(xlabels, fontweight="bold")
+
+# --- Chromosome boundaries ---
+for ax in axes:
+    for offset in chr_offsets.values():
+        ax.axvline(x=offset, color="gray", linestyle="--", linewidth=0.5)
+
+# --- Save ---
+fig.set_constrained_layout(True)
+plt.savefig("genomewide_xpclr_fst_pi_sv_thresholds_wild1_wild2_updated.png", dpi=300)
+plt.savefig("genomewide_xpclr_fst_pi_sv_thresholds_wild1_wild2_updated.pdf", bbox_inches="tight")
+plt.show()
+###################################
+###################################
+#### exPVP_vs_wild_all
+# a.Selective sweeps loci b.selective genes c.selective genes GO terms
+###################################
+###################################
+# 1. Loci: exPVP_vs_wild_all
+import pandas as pd
+import pyranges as pr
+
+# --- Thresholds ---
+fst_cutoff = 0.3
+pi_cutoff = 0.5
+window_size = 20000
+xpclr_path = "XPCLR_exPVP_vs_wild_all.txt"
+
+# --- Load FST ---
+fst = pd.read_csv("FST_exPVP_vs_wild_all.windowed.weir.fst", sep='\s+')
+fst = fst.rename(columns={"CHROM": "CHR", "BIN_START": "START", "WEIGHTED_FST": "FST"})
+fst["CHR"] = fst["CHR"].astype(str).str.lstrip("Chrchr").str.lstrip("0")
+fst["END"] = fst["START"] + window_size
+fst_hits = fst[fst["FST"] > fst_cutoff]
+fst_hits[["CHR", "START", "END"]].to_csv("FST_exPVP_vs_wild_all.bed", sep="\t", index=False, header=False)
+print(f"✅ FST peaks: {len(fst_hits)} saved to FST_exPVP_vs_wild_all.bed")
+
+# --- Load π-ratio ---
+pi1 = pd.read_csv("PI_exPVP.windowed.pi", sep='\s+').rename(columns={"CHROM": "CHR", "BIN_START": "START", "PI": "PI1"})
+pi2 = pd.read_csv("PI_wild_all.windowed.pi", sep='\s+').rename(columns={"CHROM": "CHR", "BIN_START": "START", "PI": "PI2"})
+pi1["CHR"] = pi1["CHR"].astype(str).str.lstrip("Chrchr").str.lstrip("0")
+pi2["CHR"] = pi2["CHR"].astype(str).str.lstrip("Chrchr").str.lstrip("0")
+pi = pi1.merge(pi2, on=["CHR", "START"])
+pi["PI_RATIO"] = pi["PI1"] / pi["PI2"]
+pi["END"] = pi["START"] + window_size
+pi_hits = pi[pi["PI_RATIO"] < pi_cutoff]
+pi_hits[["CHR", "START", "END"]].to_csv("PI_ratio_exPVP_vs_wild_all.bed", sep="\t", index=False, header=False)
+print(f"✅ π-ratio regions: {len(pi_hits)} saved to PI_ratio_exPVP_vs_wild_all.bed")
+
+# --- Load XP-CLR ---
+xpclr = pd.read_csv(xpclr_path, sep='\s+')[["chrom", "start", "xpclr"]]
+xpclr.columns = ["CHR", "START", "XPCLR_SCORE"]
+xpclr["CHR"] = xpclr["CHR"].astype(str).str.lstrip("Chrchr").str.lstrip("0")
+xpclr["START"] = pd.to_numeric(xpclr["START"], errors="coerce")
+xpclr["XPCLR_SCORE"] = pd.to_numeric(xpclr["XPCLR_SCORE"], errors="coerce")
+xpclr = xpclr.dropna(subset=["START", "XPCLR_SCORE"])
+xpclr["END"] = xpclr["START"] + window_size
+xpclr_thresh = xpclr["XPCLR_SCORE"].quantile(0.90)
+xpclr_hits = xpclr[xpclr["XPCLR_SCORE"] > xpclr_thresh]
+xpclr_hits[["CHR", "START", "END"]].to_csv("XPCLR_exPVP_vs_wild_all.bed", sep="\t", index=False, header=False)
+print(f"✅ XP-CLR peaks: {len(xpclr_hits)} saved to XPCLR_exPVP_vs_wild_all.bed")
+
+# --- Convert to PyRanges ---
+fst_gr = pr.PyRanges(fst_hits.rename(columns={"CHR": "Chromosome", "START": "Start", "END": "End"}))
+pi_gr = pr.PyRanges(pi_hits.rename(columns={"CHR": "Chromosome", "START": "Start", "END": "End"}))
+xpclr_gr = pr.PyRanges(xpclr_hits.rename(columns={"CHR": "Chromosome", "START": "Start", "END": "End"}))
+
+# --- Intersections ---
+overlap_fst_pi = fst_gr.join(pi_gr)
+overlap_fst_pi_xpclr = overlap_fst_pi.join(xpclr_gr)
+overlap_fst_xpclr = fst_gr.join(xpclr_gr)
+
+# --- Save Common Regions ---
+common_all = overlap_fst_pi_xpclr.df[["Chromosome", "Start", "End"]].drop_duplicates()
+common_all.columns = ["CHR", "START", "END"]
+common_all.to_csv("FST_PI_XPCLR_exPVP_vs_wild_all.bed", sep="\t", index=False, header=False)
+print(f"✅ Common regions (FST ∩ π ∩ XP-CLR): {len(common_all)} saved to FST_PI_XPCLR_exPVP_vs_wild_all.bed")
+
+common_fst_xpclr = overlap_fst_xpclr.df[["Chromosome", "Start", "End"]].drop_duplicates()
+common_fst_xpclr.columns = ["CHR", "START", "END"]
+common_fst_xpclr.to_csv("FST_XPCLR_exPVP_vs_wild_all.bed", sep="\t", index=False, header=False)
+print(f"✅ Common regions (FST ∩ XP-CLR only): {len(common_fst_xpclr)} saved to FST_XPCLR_exPVP_vs_wild_all.bed")
+
+###################################
+# 1. Annotations: exPVP_vs_wild_all
+import pandas as pd
+import pyranges as pr
+
+# --- Parameters ---
+EXPAND = 100000  # expand ±100 kb
+gff_file = "Sbicolor.BTx623.JGIv5.sorted.gff3"
+bed_files = {
+    "FST_exPVP_vs_wild_all.bed": "annotated_FST_exPVP_vs_wild_all.tsv",
+    "PI_ratio_exPVP_vs_wild_all.bed": "annotated_PI_exPVP_vs_wild_all.tsv",
+    "XPCLR_exPVP_vs_wild_all.bed": "annotated_XPCLR_exPVP_vs_wild_all.tsv",
+    "FST_XPCLR_exPVP_vs_wild_all.bed": "annotated_FST_XPCLR_exPVP_vs_wild_all.tsv",
+    "FST_PI_XPCLR_exPVP_vs_wild_all.bed": "annotated_FST_PI_XPCLR_exPVP_vs_wild_all.tsv"
+}
+
+# --- Parse mRNA features from GFF3 ---
+def parse_gff_mrnas(gff_file):
+    gff = pd.read_csv(
+        gff_file,
+        sep="\t",
+        comment="#",
+        header=None,
+        names=["CHR", "SOURCE", "TYPE", "START", "END", "SCORE", "STRAND", "PHASE", "ATTR"]
+    )
+    gff = gff[gff["TYPE"] == "mRNA"].copy()
+    gff["CHR"] = gff["CHR"].astype(str).str.replace("Chr", "", case=False).str.lstrip("0")
+    gff["mRNA_ID"] = gff["ATTR"].str.extract(r'ID=([^;]+)')
+    gff["Gene_ID"] = gff["ATTR"].str.extract(r'Parent=([^;]+)')
+    return pr.PyRanges(gff.rename(columns={
+        "CHR": "Chromosome",
+        "START": "Start",
+        "END": "End",
+        "STRAND": "Strand",
+        "mRNA_ID": "mRNA_ID",
+        "Gene_ID": "Gene_ID"
+    })[["Chromosome", "Start", "End", "Strand", "mRNA_ID", "Gene_ID"]])
+
+print(f"📖 Parsing GFF3: {gff_file}")
+mrnas = parse_gff_mrnas(gff_file)
+
+# --- Annotate each BED file ---
+for bed_file, output_file in bed_files.items():
+    print(f"\n🔍 Processing {bed_file} ...")
+
+    bed_df = pd.read_csv(bed_file, sep="\t", header=None, names=["CHR", "START", "END"])
+    bed_df["CHR"] = bed_df["CHR"].astype(str).str.lstrip("0")
+    bed_df["START"] = bed_df["START"] + 1
+    bed_df["START"] = (bed_df["START"] - EXPAND).clip(lower=1)
+    bed_df["END"] = bed_df["END"] + EXPAND
+
+    regions = pr.PyRanges(bed_df.rename(columns={"CHR": "Chromosome", "START": "Start", "END": "End"}))
+    overlap = mrnas.join(regions)
+    overlapping_df = overlap.df.drop_duplicates(subset=["mRNA_ID"])
+
+    overlapping_df[["Chromosome", "Start", "End", "Strand", "mRNA_ID", "Gene_ID"]].to_csv(
+        output_file, sep="\t", index=False
+    )
+
+    unique_mrnas = overlapping_df["mRNA_ID"].nunique()
+    unique_genes = overlapping_df["Gene_ID"].nunique()
+    print(f"✅ Annotated: {unique_mrnas} mRNAs from {unique_genes} genes → saved to {output_file}")
+########
+✅ Annotated: 528 mRNAs from 392 genes → saved to annotated_FST_exPVP_vs_wild_all.tsv
+🔍 Processing PI_ratio_exPVP_vs_wild_all.bed ...
+✅ Annotated: 2736 mRNAs from 2010 genes → saved to annotated_PI_exPVP_vs_wild_all.tsv
+🔍 Processing XPCLR_exPVP_vs_wild_all.bed ...
+✅ Annotated: 3436 mRNAs from 2519 genes → saved to annotated_XPCLR_exPVP_vs_wild_all.tsv
+🔍 Processing FST_XPCLR_exPVP_vs_wild_all.bed ...
+✅ Annotated: 119 mRNAs from 91 genes → saved to annotated_FST_XPCLR_exPVP_vs_wild_all.tsv
+🔍 Processing FST_PI_XPCLR_exPVP_vs_wild_all.bed ...
+✅ Annotated: 71 mRNAs from 54 genes → saved to annotated_FST_PI_XPCLR_exPVP_vs_wild_all.tsv
+############################################################################################################
+# 1. GO analysis:exPVP_vs_wild_all
+#C:\Sorghum\2025\temp
+#/data1/jkitony/Sorghum/SNP_variants_2025_FINAL/temp/GO_KEGG/
+##################
+#prepare files and move to seabiscuit:sorghum_goatools_assoc.tsv;go-basic.obo and BTx623_background.txt
+# Create the Association File for GOATOOLS
+# prepare_emapper_goatools_association.py
+
+import pandas as pd
+# --- INPUT: your emapper output file ---
+emapper_file = "BTx623.emapper.annotations.tsv"  # <-- replace with your actual file
+# --- OUTPUT: GOATOOLS association file (id2gos format) ---
+output_file = "sorghum_goatools_assoc.tsv"
+# --- Read emapper file (skip header) ---
+df = pd.read_csv(emapper_file, sep="\t", skiprows=4, header=None, low_memory=False)
+# Assign columns based on emapper structure
+df.columns = [
+    "query", "seed_eggNOG_ortholog", "evalue", "score", "eggNOG_OGs", "max_annot_lvl",
+    "COG_category", "Description", "Preferred_name", "GOs", "EC", "KEGG_ko", "KEGG_Pathway",
+    "KEGG_Module", "KEGG_Reaction", "KEGG_rclass", "BRITE", "KEGG_TC", "CAZy",
+    "BiGG_reaction", "PFAMs"
+]
+# --- Extract GO annotations ---
+records = []
+for _, row in df.iterrows():
+    if pd.notnull(row["GOs"]):
+        go_terms = row["GOs"].split(",")
+        for go in go_terms:
+            go = go.strip()
+            if go.startswith("GO:"):
+                records.append((row["query"], go))
+# --- Save in id2gos format: Gene<TAB>GO ---
+assoc_df = pd.DataFrame(records, columns=["Gene", "GO"])
+assoc_df.to_csv(output_file, sep="\t", index=False, header=False)
+print(f"✅ Saved {len(assoc_df)} gene-GO mappings to {output_file}")
+print("👉 Use with GOATOOLS: --annofmt id2gos")
+
+# Create the Background Gene List
+cut -f1 BTx623.emapper.annotations.tsv | grep -v "^#" | sort | uniq > BTx623_background.txt
+
+##################
+#RUN GOATOOLS
+#!/bin/bash
+
+# Set paths
+ASSOC_FILE="sorghum_goatools_assoc.tsv"
+OBO_FILE="go-basic.obo"
+BACKGROUND="BTx623_background.txt"
+GOATOOLS_SCRIPT="/data1/jkitony/Baobab/goatools/goatools/scripts/find_enrichment.py"
+
+# List of input files (annotated TSVs) - move all five to seabiscuit
+FILES=(
+  "annotated_FST_exPVP_vs_wild_all.tsv"
+  "annotated_PI_exPVP_vs_wild_all.tsv"
+  "annotated_XPCLR_exPVP_vs_wild_all.tsv"
+  "annotated_FST_XPCLR_exPVP_vs_wild_all.tsv"
+  "annotated_FST_PI_XPCLR_exPVP_vs_wild_all.tsv"
+)
+
+# Loop through each file
+for FILE in "${FILES[@]}"; do
+  # Extract base name for output prefix
+  PREFIX=$(basename "$FILE" .tsv | sed 's/annotated_//')
+
+  # Extract transcript IDs and save to input list
+  cut -f5 "$FILE" | sort | uniq > "${PREFIX}_genes.txt"
+
+  # Run GOATOOLS enrichment
+  python "$GOATOOLS_SCRIPT" \
+    "${PREFIX}_genes.txt" "$BACKGROUND" "$ASSOC_FILE" \
+    --obo "$OBO_FILE" \
+    --annofmt id2gos \
+    --outfile "${PREFIX}_selective_sweeps_go_enrichment.tsv" \
+    --pval 0.05
+
+  echo "✅ Finished GO enrichment for $FILE → ${PREFIX}_selective_sweeps_go_enrichment.tsv"
+done
+
+###################################
+###################################
+#### exPVP_vs_wild1
+# a.Selective sweeps loci b.selective genes c.selective genes GO terms
+###################################
+###################################
+# 2. Loci: exPVP_vs_wild1
+import pandas as pd
+import pyranges as pr
+
+# --- Thresholds ---
+fst_cutoff = 0.3
+pi_cutoff = 0.5
+window_size = 20000
+xpclr_path = "XPCLR_exPVP_vs_wild1.txt"
+
+# --- Load FST ---
+fst = pd.read_csv("FST_exPVP_vs_wild1.windowed.weir.fst", sep='\s+')
+fst = fst.rename(columns={"CHROM": "CHR", "BIN_START": "START", "WEIGHTED_FST": "FST"})
+fst["CHR"] = fst["CHR"].astype(str).str.lstrip("Chrchr").str.lstrip("0")
+fst["END"] = fst["START"] + window_size
+fst_hits = fst[fst["FST"] > fst_cutoff]
+fst_hits[["CHR", "START", "END"]].to_csv("FST_exPVP_vs_wild1.bed", sep="\t", index=False, header=False)
+print(f"✅ FST peaks: {len(fst_hits)} saved to FST_exPVP_vs_wild1.bed")
+
+# --- Load π-ratio ---
+pi1 = pd.read_csv("PI_exPVP.windowed.pi", sep='\s+').rename(columns={"CHROM": "CHR", "BIN_START": "START", "PI": "PI1"})
+pi2 = pd.read_csv("PI_wild1.windowed.pi", sep='\s+').rename(columns={"CHROM": "CHR", "BIN_START": "START", "PI": "PI2"})
+pi1["CHR"] = pi1["CHR"].astype(str).str.lstrip("Chrchr").str.lstrip("0")
+pi2["CHR"] = pi2["CHR"].astype(str).str.lstrip("Chrchr").str.lstrip("0")
+pi = pi1.merge(pi2, on=["CHR", "START"])
+pi["PI_RATIO"] = pi["PI1"] / pi["PI2"]
+pi["END"] = pi["START"] + window_size
+pi_hits = pi[pi["PI_RATIO"] < pi_cutoff]
+pi_hits[["CHR", "START", "END"]].to_csv("PI_ratio_exPVP_vs_wild1.bed", sep="\t", index=False, header=False)
+print(f"✅ π-ratio regions: {len(pi_hits)} saved to PI_ratio_exPVP_vs_wild1.bed")
+
+# --- Load XP-CLR ---
+xpclr = pd.read_csv(xpclr_path, sep='\s+')[["chrom", "start", "xpclr"]]
+xpclr.columns = ["CHR", "START", "XPCLR_SCORE"]
+xpclr["CHR"] = xpclr["CHR"].astype(str).str.lstrip("Chrchr").str.lstrip("0")
+xpclr["START"] = pd.to_numeric(xpclr["START"], errors="coerce")
+xpclr["XPCLR_SCORE"] = pd.to_numeric(xpclr["XPCLR_SCORE"], errors="coerce")
+xpclr = xpclr.dropna(subset=["START", "XPCLR_SCORE"])
+xpclr["END"] = xpclr["START"] + window_size
+xpclr_thresh = xpclr["XPCLR_SCORE"].quantile(0.90)
+xpclr_hits = xpclr[xpclr["XPCLR_SCORE"] > xpclr_thresh]
+xpclr_hits[["CHR", "START", "END"]].to_csv("XPCLR_exPVP_vs_wild1.bed", sep="\t", index=False, header=False)
+print(f"✅ XP-CLR peaks: {len(xpclr_hits)} saved to XPCLR_exPVP_vs_wild1.bed")
+
+# --- Convert to PyRanges ---
+fst_gr = pr.PyRanges(fst_hits.rename(columns={"CHR": "Chromosome", "START": "Start", "END": "End"}))
+pi_gr = pr.PyRanges(pi_hits.rename(columns={"CHR": "Chromosome", "START": "Start", "END": "End"}))
+xpclr_gr = pr.PyRanges(xpclr_hits.rename(columns={"CHR": "Chromosome", "START": "Start", "END": "End"}))
+
+# --- Intersections ---
+overlap_fst_pi = fst_gr.join(pi_gr)
+overlap_fst_pi_xpclr = overlap_fst_pi.join(xpclr_gr)
+overlap_fst_xpclr = fst_gr.join(xpclr_gr)
+
+# --- Save Common Regions ---
+common_all = overlap_fst_pi_xpclr.df[["Chromosome", "Start", "End"]].drop_duplicates()
+common_all.columns = ["CHR", "START", "END"]
+common_all.to_csv("FST_PI_XPCLR_exPVP_vs_wild1.bed", sep="\t", index=False, header=False)
+print(f"✅ Common regions (FST ∩ π ∩ XP-CLR): {len(common_all)} saved to FST_PI_XPCLR_exPVP_vs_wild1.bed")
+
+common_fst_xpclr = overlap_fst_xpclr.df[["Chromosome", "Start", "End"]].drop_duplicates()
+common_fst_xpclr.columns = ["CHR", "START", "END"]
+common_fst_xpclr.to_csv("FST_XPCLR_exPVP_vs_wild1.bed", sep="\t", index=False, header=False)
+print(f"✅ Common regions (FST ∩ XP-CLR only): {len(common_fst_xpclr)} saved to FST_XPCLR_exPVP_vs_wild1.bed")
+
+# XP-CLR peaks: 1291 saved to XPCLR_exPVP_vs_wild1.bed
+#✅ Common regions (FST ∩ π ∩ XP-CLR): 380 saved to FST_PI_XPCLR_exPVP_vs_wild1.bed
+#✅ Common regions (FST ∩ XP-CLR only): 459 saved to FST_XPCLR_exPVP_vs_wild1.bed
+
+###################################
+# 2. Annotations: exPVP_vs_wild1
+import pandas as pd
+import pyranges as pr
+
+# --- Parameters ---
+EXPAND = 100000  # expand ±100 kb
+gff_file = "Sbicolor.BTx623.JGIv5.sorted.gff3"
+bed_files = {
+    "FST_exPVP_vs_wild1.bed": "annotated_FST_exPVP_vs_wild1.tsv",
+    "PI_ratio_exPVP_vs_wild1.bed": "annotated_PI_exPVP_vs_wild1.tsv",
+    "XPCLR_exPVP_vs_wild1.bed": "annotated_XPCLR_exPVP_vs_wild1.tsv",
+    "FST_XPCLR_exPVP_vs_wild1.bed": "annotated_FST_XPCLR_exPVP_vs_wild1.tsv",
+    "FST_PI_XPCLR_exPVP_vs_wild1.bed": "annotated_FST_PI_XPCLR_exPVP_vs_wild1.tsv"
+}
+
+# --- Parse mRNA features from GFF3 ---
+def parse_gff_mrnas(gff_file):
+    gff = pd.read_csv(
+        gff_file,
+        sep="\t",
+        comment="#",
+        header=None,
+        names=["CHR", "SOURCE", "TYPE", "START", "END", "SCORE", "STRAND", "PHASE", "ATTR"]
+    )
+    gff = gff[gff["TYPE"] == "mRNA"].copy()
+    gff["CHR"] = gff["CHR"].astype(str).str.replace("Chr", "", case=False).str.lstrip("0")
+    gff["mRNA_ID"] = gff["ATTR"].str.extract(r'ID=([^;]+)')
+    gff["Gene_ID"] = gff["ATTR"].str.extract(r'Parent=([^;]+)')
+    return pr.PyRanges(gff.rename(columns={
+        "CHR": "Chromosome",
+        "START": "Start",
+        "END": "End",
+        "STRAND": "Strand",
+        "mRNA_ID": "mRNA_ID",
+        "Gene_ID": "Gene_ID"
+    })[["Chromosome", "Start", "End", "Strand", "mRNA_ID", "Gene_ID"]])
+
+print(f"📖 Parsing GFF3: {gff_file}")
+mrnas = parse_gff_mrnas(gff_file)
+
+# --- Annotate each BED file ---
+for bed_file, output_file in bed_files.items():
+    print(f"\n🔍 Processing {bed_file} ...")
+
+    bed_df = pd.read_csv(bed_file, sep="\t", header=None, names=["CHR", "START", "END"])
+    bed_df["CHR"] = bed_df["CHR"].astype(str).str.lstrip("0")
+    bed_df["START"] = bed_df["START"] + 1
+    bed_df["START"] = (bed_df["START"] - EXPAND).clip(lower=1)
+    bed_df["END"] = bed_df["END"] + EXPAND
+
+    regions = pr.PyRanges(bed_df.rename(columns={"CHR": "Chromosome", "START": "Start", "END": "End"}))
+    overlap = mrnas.join(regions)
+    overlapping_df = overlap.df.drop_duplicates(subset=["mRNA_ID"])
+
+    overlapping_df[["Chromosome", "Start", "End", "Strand", "mRNA_ID", "Gene_ID"]].to_csv(
+        output_file, sep="\t", index=False
+    )
+
+    unique_mrnas = overlapping_df["mRNA_ID"].nunique()
+    unique_genes = overlapping_df["Gene_ID"].nunique()
+    print(f"✅ Annotated: {unique_mrnas} mRNAs from {unique_genes} genes → saved to {output_file}")
+########
+✅ Annotated: 3112 mRNAs from 2291 genes → saved to annotated_FST_exPVP_vs_wild1.tsv
+🔍 Processing PI_ratio_exPVP_vs_wild1.bed ...
+✅ Annotated: 4900 mRNAs from 3619 genes → saved to annotated_PI_exPVP_vs_wild1.tsv
+🔍 Processing XPCLR_exPVP_vs_wild1.bed ...
+✅ Annotated: 2788 mRNAs from 2023 genes → saved to annotated_XPCLR_exPVP_vs_wild1.tsv
+🔍 Processing FST_XPCLR_exPVP_vs_wild1.bed ...
+✅ Annotated: 531 mRNAs from 401 genes → saved to annotated_FST_XPCLR_exPVP_vs_wild1.tsv
+🔍 Processing FST_PI_XPCLR_exPVP_vs_wild1.bed ...
+✅ Annotated: 412 mRNAs from 298 genes → saved to annotated_FST_PI_XPCLR_exPVP_vs_wild1.tsv
+############################################################################################################
+# 2. GO analysis:exPVP_vs_wild1
+#C:\Sorghum\2025\temp
+#/data1/jkitony/Sorghum/SNP_variants_2025_FINAL/temp/GO_KEGG/
+
+##################
+#RUN GOATOOLS
+#!/bin/bash
+
+# Set paths
+ASSOC_FILE="sorghum_goatools_assoc.tsv"
+OBO_FILE="go-basic.obo"
+BACKGROUND="BTx623_background.txt"
+GOATOOLS_SCRIPT="/data1/jkitony/Baobab/goatools/goatools/scripts/find_enrichment.py"
+
+# List of input files (annotated TSVs) - move all five to seabiscuit
+FILES=(
+  "annotated_FST_exPVP_vs_wild1.tsv"
+  "annotated_PI_exPVP_vs_wild1.tsv"
+  "annotated_XPCLR_exPVP_vs_wild1.tsv"
+  "annotated_FST_XPCLR_exPVP_vs_wild1.tsv"
+  "annotated_FST_PI_XPCLR_exPVP_vs_wild1.tsv"
+)
+
+# Loop through each file
+for FILE in "${FILES[@]}"; do
+  # Extract base name for output prefix
+  PREFIX=$(basename "$FILE" .tsv | sed 's/annotated_//')
+
+  # Extract transcript IDs and save to input list
+  cut -f5 "$FILE" | sort | uniq > "${PREFIX}_genes.txt"
+
+  # Run GOATOOLS enrichment
+  python "$GOATOOLS_SCRIPT" \
+    "${PREFIX}_genes.txt" "$BACKGROUND" "$ASSOC_FILE" \
+    --obo "$OBO_FILE" \
+    --annofmt id2gos \
+    --outfile "${PREFIX}_selective_sweeps_go_enrichment.tsv" \
+    --pval 0.05
+
+  echo "✅ Finished GO enrichment for $FILE → ${PREFIX}_selective_sweeps_go_enrichment.tsv"
+done
+
+###################################
+###################################
+#### exPVP_vs_wild2
+####
+###################################
+###################################
+# 3. Loci: exPVP_vs_wild2
+import pandas as pd
+import pyranges as pr
+
+# --- Thresholds ---
+fst_cutoff = 0.3
+pi_cutoff = 0.5
+window_size = 20000
+xpclr_path = "XPCLR_exPVP_vs_wild2.txt"
+
+# --- Load FST ---
+fst = pd.read_csv("FST_exPVP_vs_wild2.windowed.weir.fst", sep='\s+')
+fst = fst.rename(columns={"CHROM": "CHR", "BIN_START": "START", "WEIGHTED_FST": "FST"})
+fst["CHR"] = fst["CHR"].astype(str).str.lstrip("Chrchr").str.lstrip("0")
+fst["END"] = fst["START"] + window_size
+fst_hits = fst[fst["FST"] > fst_cutoff]
+fst_hits[["CHR", "START", "END"]].to_csv("FST_exPVP_vs_wild2.bed", sep="\t", index=False, header=False)
+print(f"✅ FST peaks: {len(fst_hits)} saved to FST_exPVP_vs_wild2.bed")
+
+# --- Load π-ratio ---
+pi1 = pd.read_csv("PI_exPVP.windowed.pi", sep='\s+').rename(columns={"CHROM": "CHR", "BIN_START": "START", "PI": "PI1"})
+pi2 = pd.read_csv("PI_wild2.windowed.pi", sep='\s+').rename(columns={"CHROM": "CHR", "BIN_START": "START", "PI": "PI2"})
+pi1["CHR"] = pi1["CHR"].astype(str).str.lstrip("Chrchr").str.lstrip("0")
+pi2["CHR"] = pi2["CHR"].astype(str).str.lstrip("Chrchr").str.lstrip("0")
+pi = pi1.merge(pi2, on=["CHR", "START"])
+pi["PI_RATIO"] = pi["PI1"] / pi["PI2"]
+pi["END"] = pi["START"] + window_size
+pi_hits = pi[pi["PI_RATIO"] < pi_cutoff]
+pi_hits[["CHR", "START", "END"]].to_csv("PI_ratio_exPVP_vs_wild2.bed", sep="\t", index=False, header=False)
+print(f"✅ π-ratio regions: {len(pi_hits)} saved to PI_ratio_exPVP_vs_wild2.bed")
+
+# --- Load XP-CLR ---
+xpclr = pd.read_csv(xpclr_path, sep='\s+')[["chrom", "start", "xpclr"]]
+xpclr.columns = ["CHR", "START", "XPCLR_SCORE"]
+xpclr["CHR"] = xpclr["CHR"].astype(str).str.lstrip("Chrchr").str.lstrip("0")
+xpclr["START"] = pd.to_numeric(xpclr["START"], errors="coerce")
+xpclr["XPCLR_SCORE"] = pd.to_numeric(xpclr["XPCLR_SCORE"], errors="coerce")
+xpclr = xpclr.dropna(subset=["START", "XPCLR_SCORE"])
+xpclr["END"] = xpclr["START"] + window_size
+xpclr_thresh = xpclr["XPCLR_SCORE"].quantile(0.90)
+xpclr_hits = xpclr[xpclr["XPCLR_SCORE"] > xpclr_thresh]
+xpclr_hits[["CHR", "START", "END"]].to_csv("XPCLR_exPVP_vs_wild2.bed", sep="\t", index=False, header=False)
+print(f"✅ XP-CLR peaks: {len(xpclr_hits)} saved to XPCLR_exPVP_vs_wild2.bed")
+
+# --- Convert to PyRanges ---
+fst_gr = pr.PyRanges(fst_hits.rename(columns={"CHR": "Chromosome", "START": "Start", "END": "End"}))
+pi_gr = pr.PyRanges(pi_hits.rename(columns={"CHR": "Chromosome", "START": "Start", "END": "End"}))
+xpclr_gr = pr.PyRanges(xpclr_hits.rename(columns={"CHR": "Chromosome", "START": "Start", "END": "End"}))
+
+# --- Intersections ---
+overlap_fst_pi = fst_gr.join(pi_gr)
+overlap_fst_pi_xpclr = overlap_fst_pi.join(xpclr_gr)
+overlap_fst_xpclr = fst_gr.join(xpclr_gr)
+
+# --- Save Common Regions ---
+common_all = overlap_fst_pi_xpclr.df[["Chromosome", "Start", "End"]].drop_duplicates()
+common_all.columns = ["CHR", "START", "END"]
+common_all.to_csv("FST_PI_XPCLR_exPVP_vs_wild2.bed", sep="\t", index=False, header=False)
+print(f"✅ Common regions (FST ∩ π ∩ XP-CLR): {len(common_all)} saved to FST_PI_XPCLR_exPVP_vs_wild2.bed")
+
+common_fst_xpclr = overlap_fst_xpclr.df[["Chromosome", "Start", "End"]].drop_duplicates()
+common_fst_xpclr.columns = ["CHR", "START", "END"]
+common_fst_xpclr.to_csv("FST_XPCLR_exPVP_vs_wild2.bed", sep="\t", index=False, header=False)
+print(f"✅ Common regions (FST ∩ XP-CLR only): {len(common_fst_xpclr)} saved to FST_XPCLR_exPVP_vs_wild2.bed")
+
+# FST peaks: 1216 saved to FST_exPVP_vs_wild2.bed
+✅ π-ratio regions: 3848 saved to PI_ratio_exPVP_vs_wild2.bed
+✅ XP-CLR peaks: 1296 saved to XPCLR_exPVP_vs_wild2.bed
+✅ Common regions (FST ∩ π ∩ XP-CLR): 184 saved to FST_PI_XPCLR_exPVP_vs_wild2.bed
+✅ Common regions (FST ∩ XP-CLR only): 210 saved to FST_XPCLR_exPVP_vs_wild2.bed
+###################################
+# 3. Annotations: exPVP_vs_wild2
+import pandas as pd
+import pyranges as pr
+
+# --- Parameters ---
+EXPAND = 100000  # expand ±100 kb
+gff_file = "Sbicolor.BTx623.JGIv5.sorted.gff3"
+bed_files = {
+    "FST_exPVP_vs_wild2.bed": "annotated_FST_exPVP_vs_wild2.tsv",
+    "PI_ratio_exPVP_vs_wild2.bed": "annotated_PI_exPVP_vs_wild2.tsv",
+    "XPCLR_exPVP_vs_wild2.bed": "annotated_XPCLR_exPVP_vs_wild2.tsv",
+    "FST_XPCLR_exPVP_vs_wild2.bed": "annotated_FST_XPCLR_exPVP_vs_wild2.tsv",
+    "FST_PI_XPCLR_exPVP_vs_wild2.bed": "annotated_FST_PI_XPCLR_exPVP_vs_wild2.tsv"
+}
+
+# --- Parse mRNA features from GFF3 ---
+def parse_gff_mrnas(gff_file):
+    gff = pd.read_csv(
+        gff_file,
+        sep="\t",
+        comment="#",
+        header=None,
+        names=["CHR", "SOURCE", "TYPE", "START", "END", "SCORE", "STRAND", "PHASE", "ATTR"]
+    )
+    gff = gff[gff["TYPE"] == "mRNA"].copy()
+    gff["CHR"] = gff["CHR"].astype(str).str.replace("Chr", "", case=False).str.lstrip("0")
+    gff["mRNA_ID"] = gff["ATTR"].str.extract(r'ID=([^;]+)')
+    gff["Gene_ID"] = gff["ATTR"].str.extract(r'Parent=([^;]+)')
+    return pr.PyRanges(gff.rename(columns={
+        "CHR": "Chromosome",
+        "START": "Start",
+        "END": "End",
+        "STRAND": "Strand",
+        "mRNA_ID": "mRNA_ID",
+        "Gene_ID": "Gene_ID"
+    })[["Chromosome", "Start", "End", "Strand", "mRNA_ID", "Gene_ID"]])
+
+print(f"📖 Parsing GFF3: {gff_file}")
+mrnas = parse_gff_mrnas(gff_file)
+
+# --- Annotate each BED file ---
+for bed_file, output_file in bed_files.items():
+    print(f"\n🔍 Processing {bed_file} ...")
+
+    bed_df = pd.read_csv(bed_file, sep="\t", header=None, names=["CHR", "START", "END"])
+    bed_df["CHR"] = bed_df["CHR"].astype(str).str.lstrip("0")
+    bed_df["START"] = bed_df["START"] + 1
+    bed_df["START"] = (bed_df["START"] - EXPAND).clip(lower=1)
+    bed_df["END"] = bed_df["END"] + EXPAND
+
+    regions = pr.PyRanges(bed_df.rename(columns={"CHR": "Chromosome", "START": "Start", "END": "End"}))
+    overlap = mrnas.join(regions)
+    overlapping_df = overlap.df.drop_duplicates(subset=["mRNA_ID"])
+
+    overlapping_df[["Chromosome", "Start", "End", "Strand", "mRNA_ID", "Gene_ID"]].to_csv(
+        output_file, sep="\t", index=False
+    )
+
+    unique_mrnas = overlapping_df["mRNA_ID"].nunique()
+    unique_genes = overlapping_df["Gene_ID"].nunique()
+    print(f"✅ Annotated: {unique_mrnas} mRNAs from {unique_genes} genes → saved to {output_file}")
+########
+✅ Annotated: 3112 mRNAs from 2291 genes → saved to annotated_FST_exPVP_vs_wild2.tsv
+🔍 Processing PI_ratio_exPVP_vs_wild2.bed ...
+✅ Annotated: 4900 mRNAs from 3619 genes → saved to annotated_PI_exPVP_vs_wild2.tsv
+🔍 Processing XPCLR_exPVP_vs_wild2.bed ...
+✅ Annotated: 2788 mRNAs from 2023 genes → saved to annotated_XPCLR_exPVP_vs_wild2.tsv
+🔍 Processing FST_XPCLR_exPVP_vs_wild2.bed ...
+✅ Annotated: 531 mRNAs from 401 genes → saved to annotated_FST_XPCLR_exPVP_vs_wild2.tsv
+🔍 Processing FST_PI_XPCLR_exPVP_vs_wild2.bed ...
+✅ Annotated: 412 mRNAs from 298 genes → saved to annotated_FST_PI_XPCLR_exPVP_vs_wild2.tsv
+############################################################################################################
+# 2. GO analysis:exPVP_vs_wild2
+#C:\Sorghum\2025\temp
+#/data1/jkitony/Sorghum/SNP_variants_2025_FINAL/temp/GO_KEGG/
+
+##################
+#RUN GOATOOLS
+#!/bin/bash
+
+# Set paths
+ASSOC_FILE="sorghum_goatools_assoc.tsv"
+OBO_FILE="go-basic.obo"
+BACKGROUND="BTx623_background.txt"
+GOATOOLS_SCRIPT="/data1/jkitony/Baobab/goatools/goatools/scripts/find_enrichment.py"
+
+# List of input files (annotated TSVs) - move all five to seabiscuit
+FILES=(
+  "annotated_FST_exPVP_vs_wild2.tsv"
+  "annotated_PI_exPVP_vs_wild2.tsv"
+  "annotated_XPCLR_exPVP_vs_wild2.tsv"
+  "annotated_FST_XPCLR_exPVP_vs_wild2.tsv"
+  "annotated_FST_PI_XPCLR_exPVP_vs_wild2.tsv"
+)
+
+# Loop through each file
+for FILE in "${FILES[@]}"; do
+  # Extract base name for output prefix
+  PREFIX=$(basename "$FILE" .tsv | sed 's/annotated_//')
+
+  # Extract transcript IDs and save to input list
+  cut -f5 "$FILE" | sort | uniq > "${PREFIX}_genes.txt"
+
+  # Run GOATOOLS enrichment
+  python "$GOATOOLS_SCRIPT" \
+    "${PREFIX}_genes.txt" "$BACKGROUND" "$ASSOC_FILE" \
+    --obo "$OBO_FILE" \
+    --annofmt id2gos \
+    --outfile "${PREFIX}_selective_sweeps_go_enrichment.tsv" \
+    --pval 0.05
+
+  echo "✅ Finished GO enrichment for $FILE → ${PREFIX}_selective_sweeps_go_enrichment.tsv"
+done
+########
+
+
+
+###################################
+###################################
+#### wild1_vs_wild2
+# a.Selective sweeps loci b.selective genes c.selective genes GO terms
+###################################
+###################################
+# 4. Loci: wild1_vs_wild2
+import pandas as pd
+import pyranges as pr
+
+# --- Thresholds ---
+fst_cutoff = 0.3
+pi_cutoff = 0.5
+window_size = 20000
+xpclr_path = "XPCLR_wild1_vs_wild2.txt"
+
+# --- Load FST ---
+fst = pd.read_csv("FST_wild1_vs_wild2.windowed.weir.fst", sep='\s+')
+fst = fst.rename(columns={"CHROM": "CHR", "BIN_START": "START", "WEIGHTED_FST": "FST"})
+fst["CHR"] = fst["CHR"].astype(str).str.lstrip("Chrchr").str.lstrip("0")
+fst["END"] = fst["START"] + window_size
+fst_hits = fst[fst["FST"] > fst_cutoff]
+fst_hits[["CHR", "START", "END"]].to_csv("FST_wild1_vs_wild2.bed", sep="\t", index=False, header=False)
+print(f"✅ FST peaks: {len(fst_hits)} saved to FST_wild1_vs_wild2.bed")
+
+# --- Load π-ratio ---
+pi1 = pd.read_csv("PI_wild1.windowed.pi", sep='\s+').rename(columns={"CHROM": "CHR", "BIN_START": "START", "PI": "PI1"})
+pi2 = pd.read_csv("PI_wild2.windowed.pi", sep='\s+').rename(columns={"CHROM": "CHR", "BIN_START": "START", "PI": "PI2"})
+pi1["CHR"] = pi1["CHR"].astype(str).str.lstrip("Chrchr").str.lstrip("0")
+pi2["CHR"] = pi2["CHR"].astype(str).str.lstrip("Chrchr").str.lstrip("0")
+pi = pi1.merge(pi2, on=["CHR", "START"])
+pi["PI_RATIO"] = pi["PI1"] / pi["PI2"]
+pi["END"] = pi["START"] + window_size
+pi_hits = pi[pi["PI_RATIO"] < pi_cutoff]
+pi_hits[["CHR", "START", "END"]].to_csv("PI_ratio_wild1_vs_wild2.bed", sep="\t", index=False, header=False)
+print(f"✅ π-ratio regions: {len(pi_hits)} saved to PI_ratio_wild1_vs_wild2.bed")
+
+# --- Load XP-CLR ---
+xpclr = pd.read_csv(xpclr_path, sep='\s+')[["chrom", "start", "xpclr"]]
+xpclr.columns = ["CHR", "START", "XPCLR_SCORE"]
+xpclr["CHR"] = xpclr["CHR"].astype(str).str.lstrip("Chrchr").str.lstrip("0")
+xpclr["START"] = pd.to_numeric(xpclr["START"], errors="coerce")
+xpclr["XPCLR_SCORE"] = pd.to_numeric(xpclr["XPCLR_SCORE"], errors="coerce")
+xpclr = xpclr.dropna(subset=["START", "XPCLR_SCORE"])
+xpclr["END"] = xpclr["START"] + window_size
+xpclr_thresh = xpclr["XPCLR_SCORE"].quantile(0.90)
+xpclr_hits = xpclr[xpclr["XPCLR_SCORE"] > xpclr_thresh]
+xpclr_hits[["CHR", "START", "END"]].to_csv("XPCLR_wild1_vs_wild2.bed", sep="\t", index=False, header=False)
+print(f"✅ XP-CLR peaks: {len(xpclr_hits)} saved to XPCLR_wild1_vs_wild2.bed")
+
+# --- Convert to PyRanges ---
+fst_gr = pr.PyRanges(fst_hits.rename(columns={"CHR": "Chromosome", "START": "Start", "END": "End"}))
+pi_gr = pr.PyRanges(pi_hits.rename(columns={"CHR": "Chromosome", "START": "Start", "END": "End"}))
+xpclr_gr = pr.PyRanges(xpclr_hits.rename(columns={"CHR": "Chromosome", "START": "Start", "END": "End"}))
+
+# --- Intersections ---
+overlap_fst_pi = fst_gr.join(pi_gr)
+overlap_fst_pi_xpclr = overlap_fst_pi.join(xpclr_gr)
+overlap_fst_xpclr = fst_gr.join(xpclr_gr)
+
+# --- Save Common Regions ---
+common_all = overlap_fst_pi_xpclr.df[["Chromosome", "Start", "End"]].drop_duplicates()
+common_all.columns = ["CHR", "START", "END"]
+common_all.to_csv("FST_PI_XPCLR_wild1_vs_wild2.bed", sep="\t", index=False, header=False)
+print(f"✅ Common regions (FST ∩ π ∩ XP-CLR): {len(common_all)} saved to FST_PI_XPCLR_wild1_vs_wild2.bed")
+
+common_fst_xpclr = overlap_fst_xpclr.df[["Chromosome", "Start", "End"]].drop_duplicates()
+common_fst_xpclr.columns = ["CHR", "START", "END"]
+common_fst_xpclr.to_csv("FST_XPCLR_wild1_vs_wild2.bed", sep="\t", index=False, header=False)
+print(f"✅ Common regions (FST ∩ XP-CLR only): {len(common_fst_xpclr)} saved to FST_XPCLR_wild1_vs_wild2.bed")
+
+✅ FST peaks: 1587 saved to FST_wild1_vs_wild2.bed
+✅ π-ratio regions: 1318 saved to PI_ratio_wild1_vs_wild2.bed
+✅ XP-CLR peaks: 1295 saved to XPCLR_wild1_vs_wild2.bed
+✅ Common regions (FST ∩ π ∩ XP-CLR): 35 saved to FST_PI_XPCLR_wild1_vs_wild2.bed
+✅ Common regions (FST ∩ XP-CLR only): 224 saved to FST_XPCLR_wild1_vs_wild2.bed
+###################################
+# 4. Annotations: wild1_vs_wild2
+import pandas as pd
+import pyranges as pr
+
+# --- Parameters ---
+EXPAND = 100000  # expand ±100 kb
+gff_file = "Sbicolor.BTx623.JGIv5.sorted.gff3"
+bed_files = {
+    "FST_wild1_vs_wild2.bed": "annotated_FST_wild1_vs_wild2.tsv",
+    "PI_ratio_wild1_vs_wild2.bed": "annotated_PI_wild1_vs_wild2.tsv",
+    "XPCLR_wild1_vs_wild2.bed": "annotated_XPCLR_wild1_vs_wild2.tsv",
+    "FST_XPCLR_wild1_vs_wild2.bed": "annotated_FST_XPCLR_wild1_vs_wild2.tsv",
+    "FST_PI_XPCLR_wild1_vs_wild2.bed": "annotated_FST_PI_XPCLR_wild1_vs_wild2.tsv"
+}
+
+# --- Parse mRNA features from GFF3 ---
+def parse_gff_mrnas(gff_file):
+    gff = pd.read_csv(
+        gff_file,
+        sep="\t",
+        comment="#",
+        header=None,
+        names=["CHR", "SOURCE", "TYPE", "START", "END", "SCORE", "STRAND", "PHASE", "ATTR"]
+    )
+    gff = gff[gff["TYPE"] == "mRNA"].copy()
+    gff["CHR"] = gff["CHR"].astype(str).str.replace("Chr", "", case=False).str.lstrip("0")
+    gff["mRNA_ID"] = gff["ATTR"].str.extract(r'ID=([^;]+)')
+    gff["Gene_ID"] = gff["ATTR"].str.extract(r'Parent=([^;]+)')
+    return pr.PyRanges(gff.rename(columns={
+        "CHR": "Chromosome",
+        "START": "Start",
+        "END": "End",
+        "STRAND": "Strand",
+        "mRNA_ID": "mRNA_ID",
+        "Gene_ID": "Gene_ID"
+    })[["Chromosome", "Start", "End", "Strand", "mRNA_ID", "Gene_ID"]])
+
+print(f"📖 Parsing GFF3: {gff_file}")
+mrnas = parse_gff_mrnas(gff_file)
+
+# --- Annotate each BED file ---
+for bed_file, output_file in bed_files.items():
+    print(f"\n🔍 Processing {bed_file} ...")
+
+    bed_df = pd.read_csv(bed_file, sep="\t", header=None, names=["CHR", "START", "END"])
+    bed_df["CHR"] = bed_df["CHR"].astype(str).str.lstrip("0")
+    bed_df["START"] = bed_df["START"] + 1
+    bed_df["START"] = (bed_df["START"] - EXPAND).clip(lower=1)
+    bed_df["END"] = bed_df["END"] + EXPAND
+
+    regions = pr.PyRanges(bed_df.rename(columns={"CHR": "Chromosome", "START": "Start", "END": "End"}))
+    overlap = mrnas.join(regions)
+    overlapping_df = overlap.df.drop_duplicates(subset=["mRNA_ID"])
+
+    overlapping_df[["Chromosome", "Start", "End", "Strand", "mRNA_ID", "Gene_ID"]].to_csv(
+        output_file, sep="\t", index=False
+    )
+
+    unique_mrnas = overlapping_df["mRNA_ID"].nunique()
+    unique_genes = overlapping_df["Gene_ID"].nunique()
+    print(f"✅ Annotated: {unique_mrnas} mRNAs from {unique_genes} genes → saved to {output_file}")
+########
+🔍 Processing FST_wild1_vs_wild2.bed ...
+✅ Annotated: 2366 mRNAs from 1770 genes → saved to annotated_FST_wild1_vs_wild2.tsv
+🔍 Processing PI_ratio_wild1_vs_wild2.bed ...
+✅ Annotated: 1878 mRNAs from 1389 genes → saved to annotated_PI_wild1_vs_wild2.tsv
+🔍 Processing XPCLR_wild1_vs_wild2.bed ...
+✅ Annotated: 3200 mRNAs from 2362 genes → saved to annotated_XPCLR_wild1_vs_wild2.tsv
+🔍 Processing FST_XPCLR_wild1_vs_wild2.bed ...
+✅ Annotated: 326 mRNAs from 264 genes → saved to annotated_FST_XPCLR_wild1_vs_wild2.tsv
+🔍 Processing FST_PI_XPCLR_wild1_vs_wild2.bed ...
+✅ Annotated: 10 mRNAs from 9 genes → saved to annotated_FST_PI_XPCLR_wild1_vs_wild2.tsv
+############################################################################################################
+# 2. GO analysis:wild1_vs_wild2
+#C:\Sorghum\2025\temp
+#/data1/jkitony/Sorghum/SNP_variants_2025_FINAL/temp/GO_KEGG/
+
+##################
+#RUN GOATOOLS
+#!/bin/bash
+
+# Set paths
+ASSOC_FILE="sorghum_goatools_assoc.tsv"
+OBO_FILE="go-basic.obo"
+BACKGROUND="BTx623_background.txt"
+GOATOOLS_SCRIPT="/data1/jkitony/Baobab/goatools/goatools/scripts/find_enrichment.py"
+
+# List of input files (annotated TSVs) - move all five to seabiscuit
+FILES=(
+  "annotated_FST_wild1_vs_wild2.tsv"
+  "annotated_PI_wild1_vs_wild2.tsv"
+  "annotated_XPCLR_wild1_vs_wild2.tsv"
+  "annotated_FST_XPCLR_wild1_vs_wild2.tsv"
+  "annotated_FST_PI_XPCLR_wild1_vs_wild2.tsv"
+)
+
+# Loop through each file
+for FILE in "${FILES[@]}"; do
+  # Extract base name for output prefix
+  PREFIX=$(basename "$FILE" .tsv | sed 's/annotated_//')
+
+  # Extract transcript IDs and save to input list
+  cut -f5 "$FILE" | sort | uniq > "${PREFIX}_genes.txt"
+
+  # Run GOATOOLS enrichment
+  python "$GOATOOLS_SCRIPT" \
+    "${PREFIX}_genes.txt" "$BACKGROUND" "$ASSOC_FILE" \
+    --obo "$OBO_FILE" \
+    --annofmt id2gos \
+    --outfile "${PREFIX}_selective_sweeps_go_enrichment.tsv" \
+    --pval 0.05
+
+  echo "✅ Finished GO enrichment for $FILE → ${PREFIX}_selective_sweeps_go_enrichment.tsv"
+done
+##########
+##########
+##########
+#PLOT GO TERMS
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import os
+
+# All your GO enrichment result files
+files = [
+    "FST_exPVP_vs_wild_all_selective_sweeps_go_enrichment.tsv",
+    "FST_PI_XPCLR_exPVP_vs_wild_all_selective_sweeps_go_enrichment.tsv",
+    "FST_XPCLR_exPVP_vs_wild_all_selective_sweeps_go_enrichment.tsv",
+    "PI_exPVP_vs_wild_all_selective_sweeps_go_enrichment.tsv",
+    "XPCLR_exPVP_vs_wild_all_selective_sweeps_go_enrichment.tsv",
+    "FST_exPVP_vs_wild1_selective_sweeps_go_enrichment.tsv",
+    "FST_PI_XPCLR_exPVP_vs_wild1_selective_sweeps_go_enrichment.tsv",
+    "FST_XPCLR_exPVP_vs_wild1_selective_sweeps_go_enrichment.tsv",
+    "PI_exPVP_vs_wild1_selective_sweeps_go_enrichment.tsv",
+    "XPCLR_exPVP_vs_wild1_selective_sweeps_go_enrichment.tsv",
+    "FST_exPVP_vs_wild2_selective_sweeps_go_enrichment.tsv",
+    "FST_PI_XPCLR_exPVP_vs_wild2_selective_sweeps_go_enrichment.tsv",
+    "FST_XPCLR_exPVP_vs_wild2_selective_sweeps_go_enrichment.tsv",
+    "PI_exPVP_vs_wild2_selective_sweeps_go_enrichment.tsv",
+    "XPCLR_exPVP_vs_wild2_selective_sweeps_go_enrichment.tsv",
+]
+
+# Define correct column names (based on your pasted content)
+columns = [
+    "GO", "NS", "enrichment", "GO_term_label", "ratio_in_study", "ratio_in_pop",
+    "p_uncorrected", "depth", "study_count", "p_bonferroni", "p_sidak",
+    "p_holm", "p_fdr_bh", "study_items"
+]
+
+# Load data and keep only significant terms
+all_data = []
+threshold = 0.05
+
+for file in files:
+    try:
+        df = pd.read_csv(file, sep="\t", comment="#", header=None, names=columns)
+        if "p_fdr_bh" not in df.columns:
+            print(f"⚠️  Skipping {file}: 'p_fdr_bh' column not found. Columns present: {df.columns.tolist()}")
+            continue
+
+        sig_df = df[(df["p_fdr_bh"] < threshold) & (df["study_count"] > 0)].copy()
+        if sig_df.empty:
+            print(f"⚠️  Skipping {file}: No significant terms.")
+            continue
+
+        sig_df["source"] = os.path.basename(file).replace("_selective_sweeps_go_enrichment.tsv", "")
+        all_data.append(sig_df[["GO_term_label", "study_count", "p_fdr_bh", "source"]])
+
+        print(f"✅ Loaded {file}: {len(sig_df)} significant terms")
+    except Exception as e:
+        print(f"❌ Error loading {file}: {e}")
+
+# Abort if nothing is found
+if not all_data:
+    print("❌ No significant GO terms found.")
+    exit()
+
+# Combine all into one DataFrame
+combined_df = pd.concat(all_data)
+
+# Identify most shared GO terms across comparisons
+top_terms = (
+    combined_df.groupby("GO_term_label")["source"]
+    .nunique()
+    .sort_values(ascending=False)
+    .head(30)
+    .index.tolist()
+)
+
+# Filter for those terms
+filtered_df = combined_df[combined_df["GO_term_label"].isin(top_terms)].copy()
+
+# --- Plotting ---
+plt.figure(figsize=(14, 10))
+
+# Bubble plot
+plot = sns.scatterplot(
+    data=filtered_df,
+    x="source",
+    y="GO_term_label",
+    size=-np.log10(filtered_df["p_fdr_bh"]),
+    hue="study_count",
+    sizes=(40, 300),
+    palette="viridis",
+    edgecolor="black",
+    linewidth=0.5
+)
+
+# Set text color to black
+plt.xticks(rotation=90, color='black')
+plt.yticks(color='black')
+plt.xlabel("Comparison", color='black', weight='bold')
+plt.ylabel("GO Term", color='black', weight='bold')
+plt.title("Top Shared GO Terms in Selective Sweep Enrichments", color='black', weight='bold')
+
+# Add legend with border
+legend = plt.legend(
+    title="",
+    bbox_to_anchor=(1.05, 1),
+    loc="upper left",
+    borderpad=1,
+    edgecolor="black"
+)
+legend.get_title().set_color("black")
+for text in legend.get_texts():
+    text.set_color("black")
+
+# Save to PDF and PNG
+plt.tight_layout()
+plt.savefig("shared_go_terms_enrichment1.pdf", format="pdf", dpi=300)
+plt.savefig("shared_go_terms_enrichment1.png", format="png", dpi=300)
+plt.show()
+
+##############################################################################################################
+##############################################################################################################
+##############################################################################################################
+##############################################################################################################
+#CNV:C:\Sorghum\2024\Nick\orthogroups
+
+import pandas as pd
+from pathlib import Path
+
+# Input GO enrichment files
+files = [
+    "FST_exPVP_vs_wild_all_selective_sweeps_go_enrichment.tsv",
+    "FST_PI_XPCLR_exPVP_vs_wild_all_selective_sweeps_go_enrichment.tsv",
+    "FST_XPCLR_exPVP_vs_wild_all_selective_sweeps_go_enrichment.tsv",
+    "PI_exPVP_vs_wild_all_selective_sweeps_go_enrichment.tsv",
+    "XPCLR_exPVP_vs_wild_all_selective_sweeps_go_enrichment.tsv",
+    "FST_exPVP_vs_wild1_selective_sweeps_go_enrichment.tsv",
+    "FST_PI_XPCLR_exPVP_vs_wild1_selective_sweeps_go_enrichment.tsv",
+    "FST_XPCLR_exPVP_vs_wild1_selective_sweeps_go_enrichment.tsv",
+    "PI_exPVP_vs_wild1_selective_sweeps_go_enrichment.tsv",
+    "XPCLR_exPVP_vs_wild1_selective_sweeps_go_enrichment.tsv",
+    "FST_exPVP_vs_wild2_selective_sweeps_go_enrichment.tsv",
+    "FST_PI_XPCLR_exPVP_vs_wild2_selective_sweeps_go_enrichment.tsv",
+    "FST_XPCLR_exPVP_vs_wild2_selective_sweeps_go_enrichment.tsv",
+    "PI_exPVP_vs_wild2_selective_sweeps_go_enrichment.tsv",
+    "XPCLR_exPVP_vs_wild2_selective_sweeps_go_enrichment.tsv"
+]
+
+# Clock gene list
+clock_file = "sbic_clock_genes.TSV"
+clock_df = pd.read_csv(clock_file, sep="\t")  # Columns: Gene, ID
+
+for file in files:
+    try:
+        df = pd.read_csv(file, sep="\t", comment=None)
+
+        # Fix header if needed
+        df.rename(columns={"# GO": "GO"}, inplace=True)
+
+        # Get transcript IDs and strip to gene-level
+        transcripts = df['study_items'].dropna().str.split(',').explode().str.strip()
+        transcripts = transcripts.to_frame(name="Transcript")
+        transcripts["Gene_ID"] = transcripts["Transcript"].str.extract(r"(Sobic\.\d{3}G\d{6})")
+
+        # Match with clock genes
+        matching = transcripts[transcripts["Gene_ID"].isin(clock_df["ID"])]
+        merged = matching.merge(clock_df, left_on="Gene_ID", right_on="ID")
+
+        # Save final output
+        outname = f"clock_genes_in_{Path(file).stem}.tsv"
+        merged[["Gene", "ID", "Transcript"]].drop_duplicates().to_csv(outname, sep="\t", index=False)
+        print(f"✅ {file}: Found {len(merged)} clock-related transcripts → saved to {outname}")
+
+    except Exception as e:
+        print(f"❌ Error processing {file}: {e}")
+
+###
+✅ FST_exPVP_vs_wild_all_selective_sweeps_go_enrichment.tsv: Found 0 clock-related transcripts → saved to clock_genes_in_FST_exPVP_vs_wild_all_selective_sweeps_go_enrichment.tsv
+✅ FST_PI_XPCLR_exPVP_vs_wild_all_selective_sweeps_go_enrichment.tsv: Found 0 clock-related transcripts → saved to clock_genes_in_FST_PI_XPCLR_exPVP_vs_wild_all_selective_sweeps_go_enrichment.tsv
+✅ FST_XPCLR_exPVP_vs_wild_all_selective_sweeps_go_enrichment.tsv: Found 0 clock-related transcripts → saved to clock_genes_in_FST_XPCLR_exPVP_vs_wild_all_selective_sweeps_go_enrichment.tsv
+✅ PI_exPVP_vs_wild_all_selective_sweeps_go_enrichment.tsv: Found 33 clock-related transcripts → saved to clock_genes_in_PI_exPVP_vs_wild_all_selective_sweeps_go_enrichment.tsv
+✅ XPCLR_exPVP_vs_wild_all_selective_sweeps_go_enrichment.tsv: Found 30 clock-related transcripts → saved to clock_genes_in_XPCLR_exPVP_vs_wild_all_selective_sweeps_go_enrichment.tsv
+✅ FST_exPVP_vs_wild1_selective_sweeps_go_enrichment.tsv: Found 28 clock-related transcripts → saved to clock_genes_in_FST_exPVP_vs_wild1_selective_sweeps_go_enrichment.tsv
+✅ FST_PI_XPCLR_exPVP_vs_wild1_selective_sweeps_go_enrichment.tsv: Found 0 clock-related transcripts → saved to clock_genes_in_FST_PI_XPCLR_exPVP_vs_wild1_selective_sweeps_go_enrichment.tsv
+✅ FST_XPCLR_exPVP_vs_wild1_selective_sweeps_go_enrichment.tsv: Found 0 clock-related transcripts → saved to clock_genes_in_FST_XPCLR_exPVP_vs_wild1_selective_sweeps_go_enrichment.tsv
+✅ PI_exPVP_vs_wild1_selective_sweeps_go_enrichment.tsv: Found 62 clock-related transcripts → saved to clock_genes_in_PI_exPVP_vs_wild1_selective_sweeps_go_enrichment.tsv
+✅ XPCLR_exPVP_vs_wild1_selective_sweeps_go_enrichment.tsv: Found 60 clock-related transcripts → saved to clock_genes_in_XPCLR_exPVP_vs_wild1_selective_sweeps_go_enrichment.tsv
+✅ FST_exPVP_vs_wild2_selective_sweeps_go_enrichment.tsv: Found 2 clock-related transcripts → saved to clock_genes_in_FST_exPVP_vs_wild2_selective_sweeps_go_enrichment.tsv
+✅ FST_PI_XPCLR_exPVP_vs_wild2_selective_sweeps_go_enrichment.tsv: Found 0 clock-related transcripts → saved to clock_genes_in_FST_PI_XPCLR_exPVP_vs_wild2_selective_sweeps_go_enrichment.tsv
+✅ FST_XPCLR_exPVP_vs_wild2_selective_sweeps_go_enrichment.tsv: Found 0 clock-related transcripts → saved to clock_genes_in_FST_XPCLR_exPVP_vs_wild2_selective_sweeps_go_enrichment.tsv
+✅ PI_exPVP_vs_wild2_selective_sweeps_go_enrichment.tsv: Found 42 clock-related transcripts → saved to clock_genes_in_PI_exPVP_vs_wild2_selective_sweeps_go_enrichment.tsv
+✅ XPCLR_exPVP_vs_wild2_selective_sweeps_go_enrichment.tsv: Found 99 clock-related transcripts → saved to clock_genes_in_XPCLR_exPVP_vs_wild2_selective_sweeps_go_enrichment.tsv
+
+
+################
+#MATE gene CNV Ratio Calculation
+#(base) jkitony@jkitony:/mnt/c/Sorghum/2025/SVIM_CUTESV_SURVIVOR/IGV$ 
+grep "ID=Sobic.003G403000.v5.1" Sbicolor.BTx623.JGIv5.gff3
+
+#BAM with Chr
+echo -e "Chr03\t77494151\t77497397" > MATE_gene.bed
+samtools depth -a -b MATE_gene.bed SbicPI543243_PH256.bam > depth_exPVP.txt
+awk '{sum += $3} END {print "ExPVP_PI543243 depth:", sum/NR}' depth_exPVP.txt
+ExPVP_PI543243 depth: 76.443
+
+echo -e "Chr03\t77494151\t77497397" > MATE_gene.bed
+samtools depth -a -b MATE_gene.bed SbicPI562625_PHA122.bam > depth_exPVP_PI562625.txt
+awk '{sum += $3} END {print "ExPVP_PI562625 depth:", sum/NR}' depth_exPVP_PI562625.txt
+ExPVP_PI562625 depth: 71.6553
+
+
+#BAM without Chr
+echo -e "3\t77494151\t77497397" > MATE_gene_wild.bed
+samtools depth -a -b MATE_gene_wild.bed PI156549_wild.bam > depth_wild.txt
+awk '{sum += $3} END {print "PI156549_wild mean depth:", sum/NR}' depth_wild.txt
+PI156549_wild mean depth: 16.6297
+
+CNV_ratio = 16.63 / 76.44 ≈ 0.2177
+#plot
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Step 1: Data
+data = {
+    "Sample": ["ExPVP_PI543243", "ExPVP_PI562625", "PI156549_wild"],
+    "Group": ["exPVP", "exPVP", "wild"],
+    "Depth": [76.443, 71.6553, 16.6297]
+}
+df = pd.DataFrame(data)
+
+# Step 2: Setup plot
+plt.figure(figsize=(6, 6))
+sns.set(style="whitegrid", font_scale=1.2)
+
+# Boxplot + jittered points
+ax = sns.boxplot(x="Group", y="Depth", data=df, palette={"exPVP": "steelblue", "wild": "darkgreen"},
+                 width=0.5, showfliers=False)
+sns.stripplot(x="Group", y="Depth", data=df, 
+              jitter=True, size=8, linewidth=1, edgecolor="black",
+              palette={"exPVP": "steelblue", "wild": "darkgreen"})
+
+# Annotate 1× and 4×
+ax.text(0, 78, "≈4×", ha='center', va='bottom', fontsize=12, fontweight='bold', color='steelblue')
+ax.text(1, 18, "1×", ha='center', va='bottom', fontsize=12, fontweight='bold', color='darkgreen')
+
+# Formatting
+plt.title("MATE Gene Read Depth by Group", fontweight='bold')
+plt.xlabel("Group", fontweight='bold')
+plt.ylabel("Average Read Depth", fontweight='bold')
+plt.xticks(fontweight='bold')
+plt.yticks(fontweight='bold')
+plt.ylim(0, max(df["Depth"]) * 1.3)
+plt.tight_layout()
+
+# Save as PNG and PDF
+plt.savefig("mate_gene_depth_boxplot_annotated.png", dpi=300)
+plt.savefig("mate_gene_depth_boxplot_annotated.pdf")
+plt.show()
+
+##############################################################################################################
+##############################################################################################################
+##############################################################################################################
+##############################################################################################################
+#Fig. 4 c-e: Modified basecalling
+##########################
+loreme dorado-basecall $SCRATCH/Kazu_090722_pod5/ calls_2025-05-02_T17-52-19.bam
+
+cd /scratch/nallsing/sorghum/R000-221/
+conda activate loreme
+(loreme) [ jkitony@10.7.30.227:/data1/jkitony/Sorghum/Methylation ]$ cp /scratch/nallsing/sorghum/R000-221/calls_2025-05-02_T17-52-19.bam .
+cp /scratch/nallsing/sorghum/R000-221/SbicPI562625_PHA122.a01.genome.fasta .
+cp /scratch/nallsing/sorghum/R000-221/SbicPI562625_PHA122.a01.genome.fasta.fai .
+cp /scratch/nallsing/sorghum/R000-221/SbicPI562625_PHA122.a01.genes.gff3 .
+
+samtools index calls_2025-05-02_T17-52-19.bam 
+loreme check-tags calls_2025-05-02_T17-52-19.bam #MM/ML tags found
+
+###########################
+#Alignment-reference-exPVP
+loreme dorado-align Sbicolor.BTx623.JGIv5.fa calls_2025-05-02_T17-52-19.bam BTx623_aligned.bam
+
+#Pileup
+loreme modkit-pileup Sbicolor.BTx623.JGIv5.fa BTx623_aligned.bam BTx623_methylation.bed
+
+#Calculate mean methylation level
+loreme mean --total BTx623_methylation.bed #69.34509966928496 
+
+#Methylation level of promoters
+loreme promoter Sbicolor_730_v5.1.gene.gff3 \
+  BTx623_methylation.bed --hist BTx623_promoter_exPVP.pdf > BTx623_promoter.bed
+head BTx623_promoter.bed
+
+#Methylation level of gene bodies
+loreme gene-body Sbicolor_730_v5.1.gene_exPVP.gff3 \
+  BTx623_methylation.bed --hist BTx623_gene_body.pdf > BTx623_gene_body.bed
+head BTx623_gene_body.bed
+
+#Gene methylation profile
+loreme plot-genes Sbicolor_730_v5.1.gene.gff3 \
+  BTx623_methylation.bed BTx623_genes_exPVP.pdf
+loreme plot --reference Sbicolor.BTx623.JGIv5.fa --chromosomes Chr01 Chr02 Chr03 Chr04 Chr05 Chr06 Chr07 Chr08 Chr09 Chr10 --title "Methylation Across ExPVP Chromosomes" BTx623_methylation.bed ExPVP_PI562625_all_chr_methylation.png
+
+#############
+Methylation:exPVP vs Wild on MATE gene
+
+ExPVP_PI562625
+cat BTx623_gene_body.bed | grep Sobic.003G403000.v5.1
+Chr03   77494151        77497397        Sobic.003G403000.v5.1   9.77    +
+
+#MATE gene
+awk '$1 == "Chr03" && $2 >= 77494151 && $3 <= 77497397' BTx623_methylation.bed > MATE_ExPVP_PI562625.bed
+#####
+#COVERAGE
+import pandas as pd
+import matplotlib.pyplot as plt
+from matplotlib.ticker import ScalarFormatter
+
+# Load BED file
+bed_file = "MATE_ExPVP_PI562625.bed"
+
+# Define column names
+cols = ["chrom", "start", "end", "context", "coverage", "dot", "start2", "end2",
+        "rgb", "score", "methylation_pct", "meth_count", "unmeth_count",
+        "x1", "x2", "x3", "x4", "x5"]
+
+# Read the BED file
+df = pd.read_csv(bed_file, sep="\t", header=None, names=cols)
+
+# Compute position for plotting
+df["position"] = (df["start"] + df["end"]) // 2
+
+# Define region start and end for x-axis label
+region_start = df["start"].min()
+region_end = df["end"].max()
+
+# Create plot
+plt.figure(figsize=(10, 4))
+plt.plot(df["position"], df["coverage"], marker='o', linestyle='-', color='blue', label='Coverage')
+
+# Format axis with no scientific notation
+plt.gca().xaxis.set_major_formatter(ScalarFormatter(useOffset=False))
+plt.xticks(rotation=45, fontsize=10, fontweight='bold')
+plt.yticks(fontsize=10, fontweight='bold')
+
+# Bold axis labels and title
+plt.xlabel(f"Genomic Position on Chr03 ({region_start}–{region_end})", fontsize=12, fontweight='bold')
+plt.ylabel("Methylation Coverage", fontsize=12, fontweight='bold')
+plt.title("Methylation Coverage across MATE Gene Region (ExPVP)", fontsize=13, fontweight='bold')
+
+# Add grid and tight layout
+plt.grid(True)
+plt.tight_layout()
+
+# Save to both PNG and PDF
+plt.savefig("MATE_ExPVP_coverage_plot.png", dpi=300)
+plt.savefig("MATE_ExPVP_coverage_plot.pdf")
+
+# Show the plot
+plt.show()
+
+##########
+#Methyalion level
+import pandas as pd
+import matplotlib.pyplot as plt
+from matplotlib.ticker import ScalarFormatter
+
+# Step 1: Read the BED file (10 columns only because last field is composite)
+df = pd.read_csv("MATE_ExPVP_PI562625.bed", sep="\t", header=None, usecols=range(10))
+
+# Step 2: Split the last column (col 9) by space
+extra_cols = df[9].str.split(" ", expand=True)
+extra_cols.columns = ["coverage_dup", "methylation_pct", "meth", "unmeth", "x1", "x2", "x3", "x4", "x5"]
+
+# Step 3: Combine with original dataframe
+df = pd.concat([df.iloc[:, 0:9], extra_cols], axis=1)
+
+# Step 4: Convert data types
+df["methylation_pct"] = pd.to_numeric(df["methylation_pct"], errors='coerce')
+df["position"] = (df[1] + df[2]) // 2  # midpoints from start and end
+
+# Step 5: Drop missing data
+df.dropna(subset=["methylation_pct"], inplace=True)
+
+# Step 6: Plot
+plt.figure(figsize=(10, 4))
+plt.plot(df["position"], df["methylation_pct"], marker='o', linestyle='-', color='green')
+
+# Formatting
+plt.gca().xaxis.set_major_formatter(ScalarFormatter(useOffset=False))
+plt.xticks(rotation=45, fontsize=10, fontweight='bold')
+plt.yticks(fontsize=10, fontweight='bold')
+plt.ylim(0, 100)
+
+# Labels
+start, end = df[1].min(), df[2].max()
+plt.xlabel(f"Genomic Position on Chr03 ({start}–{end})", fontsize=12, fontweight='bold')
+plt.ylabel("Methylation Percentage", fontsize=12, fontweight='bold')
+plt.title("Methylation Percentage across MATE Gene Region (ExPVP)", fontsize=13, fontweight='bold')
+
+plt.grid(True)
+plt.tight_layout()
+
+# Save output
+plt.savefig("MATE_ExPVP_methylation_pct_plot.png", dpi=300)
+plt.savefig("MATE_ExPVP_methylation_pct_plot.pdf")
+plt.show()
+
+
+
+###########################
+#Alignment-reference- wild
+loreme dorado-align Sbicolor.BTx623.JGIv5.fa Sbic_PI156549.pb_HiFi.R000-786.L005-388.bam BTx623_aligned_wild.bam
+
+#Pileup
+loreme modkit-pileup Sbicolor.BTx623.JGIv5.fa BTx623_aligned_wild.bam BTx623_methylation_wild.bed
+
+#Calculate mean methylation level
+loreme mean --total BTx623_methylation_wild.bed # 63.73602008860354
+
+#Methylation level of promoters
+loreme promoter Sbicolor_730_v5.1.gene.gff3 \
+  BTx623_methylation_wild.bed --hist BTx623_promoter_wild.pdf > BTx623_promoter_wild.bed
+head BTx623_promoter_wild.bed
+
+#Methylation level of gene bodies
+loreme gene-body Sbicolor_730_v5.1.gene.gff3 \
+  BTx623_methylation_wild.bed --hist BTx623_gene_body_wild.pdf > BTx623_gene_body_wild.bed
+head BTx623_gene_body_wild.bed
+
+#Gene methylation profile
+loreme plot-genes Sbicolor_730_v5.1.gene.gff3 \
+  BTx623_methylation_wild.bed BTx623_genes_wild.pdf
+loreme plot --reference Sbicolor.BTx623.JGIv5.fa --chromosomes Chr01 Chr02 Chr03 Chr04 Chr05 Chr06 Chr07 Chr08 Chr09 Chr10 --title "Methylation Across Wild Accession Chromosomes" BTx623_methylation_wild.bed Wild_PI156549_all_chr_methylation.png
+
+#MATE gene-same reference-BTx623
+awk '$1 == "Chr03" && $2 >= 77494151 && $3 <= 77497397' BTx623_methylation_wild.bed > MATE_Wild_PI156549.bed
+###
+##########
+##########
+#Methyalion level
+import pandas as pd
+import matplotlib.pyplot as plt
+from matplotlib.ticker import ScalarFormatter
+
+# Step 1: Read the BED file (10 columns only because last field is composite)
+df = pd.read_csv("MATE_Wild_PI156549.bed", sep="\t", header=None, usecols=range(10))
+
+# Step 2: Split the last column (col 9) by space
+extra_cols = df[9].str.split(" ", expand=True)
+extra_cols.columns = ["coverage_dup", "methylation_pct", "meth", "unmeth", "x1", "x2", "x3", "x4", "x5"]
+
+# Step 3: Combine with original dataframe
+df = pd.concat([df.iloc[:, 0:9], extra_cols], axis=1)
+
+# Step 4: Convert data types
+df["methylation_pct"] = pd.to_numeric(df["methylation_pct"], errors='coerce')
+df["position"] = (df[1] + df[2]) // 2  # midpoints from start and end
+
+# Step 5: Drop missing data
+df.dropna(subset=["methylation_pct"], inplace=True)
+
+# Step 6: Plot
+plt.figure(figsize=(10, 4))
+plt.plot(df["position"], df["methylation_pct"], marker='o', linestyle='-', color='green')
+
+# Formatting
+plt.gca().xaxis.set_major_formatter(ScalarFormatter(useOffset=False))
+plt.xticks(rotation=45, fontsize=10, fontweight='bold')
+plt.yticks(fontsize=10, fontweight='bold')
+plt.ylim(0, 100)
+
+# Labels
+start, end = df[1].min(), df[2].max()
+plt.xlabel(f"Genomic Position on Chr03 ({start}–{end})", fontsize=12, fontweight='bold')
+plt.ylabel("Methylation Percentage", fontsize=12, fontweight='bold')
+plt.title("Methylation Percentage across MATE Gene Region (Wild)", fontsize=13, fontweight='bold')
+
+plt.grid(True)
+plt.tight_layout()
+
+# Save output
+plt.savefig("MATE_Wild_methylation_pct_plot.png", dpi=300)
+plt.savefig("MATE_Wild_methylation_pct_plot.pdf")
+plt.show()
