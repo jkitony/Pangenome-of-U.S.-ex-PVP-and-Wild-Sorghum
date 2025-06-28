@@ -30,7 +30,7 @@ Functional enrichment of genes under selection
 Variation in copy number and methylation profiles for key candidate genes
 
 ## Data Access
-Raw sequencing reads: NCBI SRA PRJNA1283509
-Genome assemblies and annotations:
+1. Raw sequencing reads: NCBI SRA PRJNA1283509
+2. Genome assemblies and annotations:
 https://resources.michael.salk.edu/ 
 https://figshare.com/s/02b42c7a3013946c1c17 
