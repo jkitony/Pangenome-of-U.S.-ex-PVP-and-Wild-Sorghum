@@ -1,0 +1,1001 @@
+#########################################
+#Fig. 3a python plot_stacked_sv_bar.py
+##########################################
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# Load the merged TSV summary
+df = pd.read_csv("merged_summary.tsv", sep="\t")
+
+# Columns to stack
+svim_cols = ["SVIM_BND", "SVIM_DEL", "SVIM_DUP:TANDEM", "SVIM_INS", "SVIM_INV"]
+
+# Cleaned legend labels (remove 'SVIM_')
+legend_labels = [col.replace("SVIM_", "") for col in svim_cols]
+
+# Convert SVIM columns to numeric (handle missing or non-numeric safely)
+for col in svim_cols:
+    df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+
+# Define custom colors
+custom_colors = ["#4daf4a", "#377eb8", "#ff7f00", "#984ea3", "#e41a1c"]
+
+# Plot setup
+fig, ax = plt.subplots(figsize=(12, 6))
+
+# Stacked bar plot
+bottom = None
+for col, color, label in zip(svim_cols, custom_colors, legend_labels):
+    ax.bar(df["Accession"], df[col], bottom=bottom, label=label, color=color)
+    if bottom is None:
+        bottom = df[col].copy()
+    else:
+        bottom += df[col]
+
+# Labels and legend
+ax.set_ylabel("SV Count", fontweight='bold')
+ax.set_xlabel("Accession", fontweight='bold')
+ax.set_title("", fontweight='bold')
+
+# X-axis formatting
+plt.xticks(rotation=45, ha='right', fontweight='normal')
+ax.tick_params(axis='y', labelsize=10)
+for label in ax.get_yticklabels():
+    label.set_fontweight('normal')
+
+# Legend outside
+ax.legend(
+    loc="center left",
+    bbox_to_anchor=(1.01, 0.5),
+    title="SV Type",
+    title_fontsize=11,
+    fontsize=10,
+    frameon=False
+)
+
+plt.tight_layout()
+
+# Save output
+plt.savefig("summary_stacked_bar.png", dpi=300, bbox_inches="tight")
+plt.savefig("summary_stacked_bar.pdf", bbox_inches="tight")
+plt.close()
+
+print("✅ Saved final stacked bar plots as summary_stacked_bar.png and summary_stacked_bar.pdf")
+
+#########################################
+#Fig. 3b SV lengths box plots
+##########################################
+
+import os
+import gzip
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Configuration
+vcf_dir = "/data1/jkitony/Sorghum/graph_pangenome2025/fiftygenomes/TenChrFastaCleaned/temp/svim_cutesv_results"
+sv_types = ["DEL", "INS"]
+svtype_order = [f"SVIM_{t}" for t in sv_types]
+sv_colors = {"SVIM_INS": "green", "SVIM_DEL": "red"}
+
+# Parse VCF files
+records = []
+for filename in os.listdir(vcf_dir):
+    if filename.endswith(".svim.vcf.gz"):
+        sample = filename.replace(".svim.vcf.gz", "")
+        file_path = os.path.join(vcf_dir, filename)
+        with gzip.open(file_path, "rt") as vcf:
+            for line in vcf:
+                if line.startswith("#"):
+                    continue
+                parts = line.strip().split("\t")
+                info = parts[7]
+                svtype = None
+                svlen = None
+                for entry in info.split(";"):
+                    if entry.startswith("SVTYPE="):
+                        svtype = entry.replace("SVTYPE=", "")
+                    if entry.startswith("SVLEN="):
+                        svlen = entry.replace("SVLEN=", "")
+                if svtype in sv_types and svlen:
+                    try:
+                        svlen = abs(int(svlen))
+                        records.append({
+                            "Sample": sample,
+                            "SVTYPE": f"SVIM_{svtype}",
+                            "SVLEN": svlen
+                        })
+                    except ValueError:
+                        continue
+
+# Create DataFrame
+df = pd.DataFrame(records)
+df = df[df["SVTYPE"].isin(svtype_order)]
+df["SVTYPE"] = pd.Categorical(df["SVTYPE"], categories=svtype_order, ordered=True)
+
+# Save TSV
+df.to_csv("svim_INS_DEL_svlen.tsv", sep="\t", index=False)
+
+# Styling
+plt.rcParams.update({
+    "text.color": "black",
+    "axes.labelcolor": "black",
+    "xtick.color": "black",
+    "ytick.color": "black",
+    "axes.labelweight": "bold",
+    "font.weight": "bold"
+})
+
+sns.set(style="whitegrid")
+plt.figure(figsize=(8, 5))
+
+# Plot boxplot with hue
+sns.boxplot(
+    data=df,
+    x="SVTYPE",
+    y="SVLEN",
+    hue="SVTYPE",
+    order=svtype_order,
+    palette=sv_colors,
+    width=0.6,
+    fliersize=0,
+    legend=False
+)
+
+# Annotate medians
+for i, svtype in enumerate(svtype_order):
+    subset = df[df["SVTYPE"] == svtype]
+    if not subset.empty:
+        median_val = subset["SVLEN"].median()
+        plt.text(
+            i, median_val * 1.4,
+            f"Median: {int(median_val):,} bp",
+            ha='center', va='bottom',
+            fontsize=9, fontweight='bold', color='black'
+        )
+
+# Log y-axis: replace 0 with 1, but label it as "0"
+plt.yscale("log")
+plt.ylim(1, 1e5)
+plt.yticks([1, 10, 100, 1000, 10000, 100000], ["0", "10", "100", "1K", "10K", "100K"])
+
+# Labels
+plt.xlabel("SV Type", fontweight='bold', color='black')
+plt.ylabel("SV Length (bp, log scale)", fontweight='bold', color='black')
+plt.title("", fontweight='bold', color='black')
+plt.xticks(fontweight='bold', color='black')
+plt.yticks(fontweight='bold', color='black')
+
+plt.tight_layout()
+plt.savefig("svim_svlen_boxplot_INS_DEL.png", dpi=300)
+plt.savefig("svim_svlen_boxplot_INS_DEL.pdf")
+plt.show()
+
+#########################################
+#Fig. 3c SV length promoter and exon
+##########################################
+#Regional and by SV type
+#extract_exons_promoters_btx623.sh
+chmod +x extract_exons_promoters_btx623.sh
+./extract_exons_promoters_btx623.sh
+#######################################
+#!/bin/bash
+
+# Input GFF3 file
+GFF="BTX623.gff3"
+
+# Output BED files
+EXON_BED="exons.bed"
+PROMOTER_BED="promoters.bed"
+
+# Extract exons and convert chromosome names to Chr01, Chr02...
+grep -P "\texon\t" "$GFF" | awk -F'\t' 'BEGIN{OFS="\t"} {
+    chr = $1;
+    if (chr ~ /^[0-9]+$/)
+        chr = "Chr" sprintf("%02d", chr);
+    else if (chr ~ /^[XYM]$/)
+        chr = "Chr" chr;
+    print chr, $4 - 1, $5, ".", ".", $7
+}' > "$EXON_BED"
+
+# Extract gene regions to define promoters (2kb upstream/downstream of TSS)
+awk -F'\t' '$3=="gene"' "$GFF" | awk -F'\t' 'BEGIN{OFS="\t"} {
+    chr = $1;
+    if (chr ~ /^[0-9]+$/)
+        chr = "Chr" sprintf("%02d", chr);
+    else if (chr ~ /^[XYM]$/)
+        chr = "Chr" chr;
+    
+    if ($7 == "+") {
+        start = $4 - 2000; end = $4;
+    } else {
+        start = $5; end = $5 + 2000;
+    }
+    if (start < 0) start = 0;
+    print chr, start, end, ".", ".", $7
+}' > "$PROMOTER_BED"
+
+echo "✅ Extracted:"
+echo "- $EXON_BED"
+echo "- $PROMOTER_BED"
+
+######################
+#Convert VCF to BED
+# For all samples, extract INS only
+for vcf in *.svim.vcf.gz; do
+    sample=$(basename "$vcf" .svim.vcf.gz)
+    zgrep -v "^#" "$vcf" | awk -F'\t' '
+        $8 ~ /SVTYPE=INS/ {
+            match($8, /SVLEN=([^;]+)/, a);
+            if (a[1]) {
+                len = a[1]; if (len < 0) len = -len;
+                print $1, $2-1, $2, len
+            }
+        }' > "${sample}.INS.bed"
+done
+
+#########################
+# intersect + plot
+#mamba activate sv_calling_env
+extract_INS_lengths_by_region.sh
+Ensures consistent format across *.INS.bed, promoters.bed, and exons.bed.
+Performs intersections with promoter and exon regions.
+Generates a clean long-format file: INS_region_lengths.tsv.
+chmod +x extract_INS_lengths_by_region.sh
+./extract_INS_lengths_by_region.sh
+###################################
+#!/bin/bash
+
+set -euo pipefail
+
+echo "🔧 Step 1: Standardizing promoters.bed and exons.bed..."
+
+for bed in promoters.bed exons.bed; do
+    awk 'BEGIN{OFS="\t"} {
+        # Normalize chromosome name (e.g., 1 → Chr01)
+        if ($1 ~ /^[0-9]+$/)
+            $1 = "Chr" sprintf("%02d", $1);
+        else if ($1 ~ /^Chr[0-9]+$/) {
+            split($1, a, "Chr");
+            $1 = "Chr" sprintf("%02d", a[2]);
+        }
+        print $1, $2, $3, ".", ".", "."
+    }' "$bed" > tmp && mv tmp "$bed"
+done
+
+echo "🔧 Step 2: Standardizing all *.INS.bed files (SVLEN in column 4)..."
+
+for bed in *.INS.bed; do
+    awk 'BEGIN{OFS="\t"} {
+        if (NF >= 4) {
+            # Normalize chromosome name
+            if ($1 ~ /^[0-9]+$/)
+                $1 = "Chr" sprintf("%02d", $1);
+            else if ($1 ~ /^Chr[0-9]+$/) {
+                split($1, a, "Chr");
+                $1 = "Chr" sprintf("%02d", a[2]);
+            }
+            # Print normalized and padded BED with SVLEN preserved
+            print $1, $2, $3, $4, ".", "."
+        }
+    }' "$bed" > tmp && mv tmp "$bed"
+done
+
+echo "🔍 Step 3: Running intersection with promoters and exons..."
+
+OUT="INS_region_lengths.tsv"
+> "$OUT"  # Clear output
+
+for bed in *.INS.bed; do
+    sample=$(basename "$bed" .INS.bed)
+
+    # Intersect with promoters
+    bedtools intersect -wa -a "$bed" -b promoters.bed | \
+        awk -v s="$sample" '{print s"\tINS\tpromoter\t"$4}' >> "$OUT"
+
+    # Intersect with exons
+    bedtools intersect -wa -a "$bed" -b exons.bed | \
+        awk -v s="$sample" '{print s"\tINS\texon\t"$4}' >> "$OUT"
+done
+
+echo "✅ Done! Output written to: $OUT"
+#########################################
+#plot_INS_promoter_exon_violin3.py
+#python plot_INS_promoter_exon_violin3.py is the FINAL after above preparation to know where are promoters and exons!
+
+##########################################
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+import numpy as np
+
+# Load the data
+df = pd.read_csv("INS_region_lengths.tsv", sep="\t", names=["Sample", "SVTYPE", "Region", "SVLEN"])
+
+# Filter for promoter and exon regions
+df = df[df["Region"].isin(["promoter", "exon"])]
+df["SVLEN"] = pd.to_numeric(df["SVLEN"], errors='coerce')
+df = df.dropna(subset=["SVLEN"])
+
+# Compute mean insertion length (before log)
+mean_promoter = df[df["Region"] == "promoter"]["SVLEN"].mean()
+mean_exon = df[df["Region"] == "exon"]["SVLEN"].mean()
+
+# Log-transform SVLEN
+df["log10_SVLEN"] = np.log10(df["SVLEN"])
+
+# Set global font styles for black & bold
+plt.rcParams.update({
+    "text.color": "black",
+    "axes.labelcolor": "black",
+    "xtick.color": "black",
+    "ytick.color": "black",
+    "axes.labelweight": "bold",
+    "font.weight": "bold"
+})
+
+# Plot setup
+sns.set(style="whitegrid")
+plt.figure(figsize=(8, 4))
+palette = {"promoter": "orange", "exon": "steelblue"}
+
+# Create the violin plot
+sns.violinplot(
+    data=df,
+    x="log10_SVLEN",
+    y="Region",
+    hue="Region",
+    palette=palette,
+    inner="quartile",
+    density_norm="width",
+    legend=False
+)
+
+# Customize axis labels and ticks
+plt.xlabel("log10(Insertion Length [bp])", fontweight='bold', color='black')
+plt.ylabel("Genomic Region", fontweight='bold', color='black')
+plt.xticks(ticks=np.arange(2, 5, 0.5), labels=[f"{x:.1f}" for x in np.arange(2, 5, 0.5)], fontweight='bold', color='black')
+plt.yticks(fontweight='bold', color='black')
+
+# Title with mean values
+plt.title(
+    f"Insertion Length Distribution in Promoter and Exon Regions\n"
+    f"Mean length: Promoter = {mean_promoter:.0f} bp, Exon = {mean_exon:.0f} bp",
+    fontweight='bold',
+    color='black'
+)
+
+plt.tight_layout()
+
+# Save plot
+plt.savefig("INS_promoter_exon_violinplot.png", dpi=300)
+plt.savefig("INS_promoter_exon_violinplot.pdf")
+
+plt.show()
+
+
+
+#########################################
+#Fig. 3d syri-synteny analysis
+##########################################
+#SYRI - genome following genespace genome order
+#############################################
+conda activate syri_env
+
+#sliding window of 2 in the given list.
+#Save this as prepare_jobs.sh to generate a job list:
+##############################################
+#script
+##############################################
+#Use GNU parallel
+#prepare_jobs.sh
+#!/bin/bash
+
+GENOME_LIST=(
+    ExPVP_PI596567
+    ExPVP_PI601554
+    ExPVP_PI574398
+    ExPVP_PI574407
+    ExPVP_PI601552
+    Wild_PI156549_HAP1
+    Wild_PI156549_HAP2
+    BTX623
+    ExPVP_PI562622
+    ExPVP_PI543247
+    ExPVP_PI543246
+    ExPVP_PI602600
+    ExPVP_PI601720
+    ExPVP_PI601718
+    ExPVP_PI562625
+    ExPVP_PI562623
+    ExPVP_PI562624
+    ExPVP_PI554654
+    ExPVP_PI602599
+    ExPVP_PI574406
+    ExPVP_PI554648
+    ExPVP_PI594355
+    ExPVP_PI555457
+    ExPVP_PI601719
+    ExPVP_PI601721
+    ExPVP_PI562621
+    ExPVP_PI601553
+    ExPVP_PI554647
+    ExPVP_PI554650
+    ExPVP_PI601264
+    ExPVP_PI594354
+    ExPVP_PI601716
+    ExPVP_PI595221
+    ExPVP_PI601415
+    ExPVP_PI554652
+    ExPVP_PI544069
+    ExPVP_PI596332
+    ExPVP_PI601555
+    ExPVP_PI554649
+    ExPVP_PI601756
+    RTx430
+    ExPVP_PI601557
+    ExPVP_PI601717
+    ExPVP_PI543243
+    ExPVP_PI554646
+    ExPVP_PI564085
+    ExPVP_PI601556
+    ExPVP_PI601744
+    ExPVP_PI561926
+    ExPVP_PI601743
+)
+
+> jobs.txt
+
+for (( i=0; i<${#GENOME_LIST[@]}-1; i++ )); do
+    REF=${GENOME_LIST[$i]}
+    QRY=${GENOME_LIST[$i+1]}
+    SAM_FILE="${REF}.${QRY}.sam"
+    OUT_DIR="${REF}.${QRY}.syri"
+
+    if [[ -f "$SAM_FILE" ]]; then
+        echo "[SKIP] $SAM_FILE already exists"
+    else
+        echo "minimap2 -t 40 -ax asm5 --eqx ${REF}.fasta ${QRY}.fasta > ${SAM_FILE} && mkdir -p ${OUT_DIR} && syri -c ${SAM_FILE} -r ${REF}.fasta --nc 45 --dir ${OUT_DIR} -q ${QRY}.fasta -k -F S" >> jobs.txt
+    fi
+done
+##############################################
+#run script
+##############################################
+#Run it to generate jobs.txt
+bash prepare_jobs.sh
+
+##############################################
+#Execute with parallel -if many check .sam if =0 before re-running with less jobs because of memory -error 137 in log files- 25 faile for example 2 below 
+##############################################
+screen -S syri_parallel
+conda activate syri_env
+(base) [ jkitony@10.7.30.227:/data1/jkitony/Sorghum/graph_pangenome2025/fiftygenomes/TenChrFastaCleaned ]$
+
+cat jobs.txt | parallel -j 2 --joblog joblog_fix2.txt
+
+#####################################
+#Fig.3d plot
+#####################################
+#/data1/jkitony/Sorghum/graph_pangenome2025/fiftygenomes/TenChrFastaCleaned
+#run_plotsr_50.sh
+#chmod +x run_plotsr_50.sh
+#./run_plotsr_50.sh
+#Below
+# #--chr Chr01 \ to -o plotsr_sorghum_50genomes_Chr01.v4.pdf \
+###########################
+#!/bin/bash
+
+# Save this as run_plotsr_50.sh and make executable with chmod +x
+
+# Define ordered genome list
+GENOME_LIST=(
+  ExPVP_PI596567
+  ExPVP_PI601554
+  ExPVP_PI574398
+  ExPVP_PI574407
+  ExPVP_PI601552
+  Wild_PI156549_HAP1
+  Wild_PI156549_HAP2
+  BTX623
+  ExPVP_PI562622
+  ExPVP_PI543247
+  ExPVP_PI543246
+  ExPVP_PI602600
+  ExPVP_PI601720
+  ExPVP_PI601718
+  ExPVP_PI562625
+  ExPVP_PI562623
+  ExPVP_PI562624
+  ExPVP_PI554654
+  ExPVP_PI602599
+  ExPVP_PI574406
+  ExPVP_PI554648
+  ExPVP_PI594355
+  ExPVP_PI555457
+  ExPVP_PI601719
+  ExPVP_PI601721
+  ExPVP_PI562621
+  ExPVP_PI601553
+  ExPVP_PI554647
+  ExPVP_PI554650
+  ExPVP_PI601264
+  ExPVP_PI594354
+  ExPVP_PI601716
+  ExPVP_PI595221
+  ExPVP_PI601415
+  ExPVP_PI554652
+  ExPVP_PI544069
+  ExPVP_PI596332
+  ExPVP_PI601555
+  ExPVP_PI554649
+  ExPVP_PI601756
+  RTx430
+  ExPVP_PI601557
+  ExPVP_PI601717
+  ExPVP_PI543243
+  ExPVP_PI554646
+  ExPVP_PI564085
+  ExPVP_PI601556
+  ExPVP_PI601744
+  ExPVP_PI561926
+  ExPVP_PI601743
+)
+
+# Build SR arguments
+SR_ARGS=""
+for ((i=0; i<${#GENOME_LIST[@]}-1; i++)); do
+  for ((j=i+1; j<${#GENOME_LIST[@]}; j++)); do
+    g1=${GENOME_LIST[$i]}
+    g2=${GENOME_LIST[$j]}
+    sr_file="${g1}.${g2}.syri/syri.out"
+    if [[ -f "$sr_file" ]]; then
+      SR_ARGS+=" --sr $sr_file"
+    fi
+  done
+done
+
+# Run plotsr
+plotsr $SR_ARGS \
+  --genomes genomes.txt \
+  --cfg base.cfg \
+  --chr Chr01 \
+  -o plotsr_sorghum_50genomes_Chr01.draft1.pdf \
+  -S 0.6 -W 3 -H 10 -f 10
+
+
+###################################################################
+#summary of summary:(base) jkitony@jkitony:/mnt/c/Sorghum/2025/syri$
+###################################################################
+#Summarize syri
+#!/bin/bash
+
+# Directory containing the individual directories
+base_dir="."
+
+# Output summary file
+output_file="syri_summary_of_summary_table.txt"
+
+# Header for the summary table
+echo -e "Individual\tInversions\tTranslocations\tInsertions\tDeletions\tCopygains\tCopylosses\tHighly_diverged\tTandem_repeats\tSNPs\tSyntenic_regions\tDuplications_reference\tDuplications_query\tNot_aligned_reference\tNot_aligned_query" > "$output_file"
+
+# Loop through each individual directory
+for dir in ${base_dir}/*.syri; do
+  # Extract individual name from directory name
+  individual=$(basename "$dir")
+
+  # File containing the summary data
+  summary_file="${dir}/syri.summary"
+  
+  # Check if summary file exists
+  if [[ -f "$summary_file" ]]; then
+    # Extract relevant values from the summary file
+    inversions=$(grep -w "Inversions" "$summary_file" | awk '{print $2}')
+    translocations=$(grep -w "Translocations" "$summary_file" | awk '{print $2}')
+    insertions=$(grep -w "Insertions" "$summary_file" | awk '{print $2}')
+    deletions=$(grep -w "Deletions" "$summary_file" | awk '{print $2}')
+    copygains=$(grep -w "Copygains" "$summary_file" | awk '{print $2}')
+    copylosses=$(grep -w "Copylosses" "$summary_file" | awk '{print $2}')
+    highly_diverged=$(grep "Highly diverged" "$summary_file" | awk '{print $3}')
+    tandem_repeats=$(grep "Tandem repeats" "$summary_file" | awk '{print $3}')
+    snps=$(grep -w "SNPs" "$summary_file" | awk '{print $2}')
+    syntenic_regions=$(grep "Syntenic regions" "$summary_file" | awk '{print $3}')
+    duplications_ref=$(grep "Duplications (reference)" "$summary_file" | awk '{print $3}')
+    duplications_query=$(grep "Duplications (query)" "$summary_file" | awk '{print $3}')
+    not_aligned_ref=$(grep "Not aligned (reference)" "$summary_file" | awk '{print $4}')
+    not_aligned_query=$(grep "Not aligned (query)" "$summary_file" | awk '{print $4}')
+    
+    # Append values to the summary table
+    echo -e "$individual\t$inversions\t$translocations\t$insertions\t$deletions\t$copygains\t$copylosses\t$highly_diverged\t$tandem_repeats\t$snps\t$syntenic_regions\t$duplications_ref\t$duplications_query\t$not_aligned_ref\t$not_aligned_query" >> "$output_file"
+  else
+    echo "Summary file not found for $individual"
+  fi
+done
+
+###########################
+/mnt/c/Sorghum/2025/syri
+chmod +x summarize_syri.sh
+./summarize_syri.sh
+
+#####################################
+#Fig3e syri summary plot
+#####################################
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# Load the TSV file
+df = pd.read_csv("syri_summary_of_summary_table_viewing.tsv", sep="\t")
+
+# Set 'Pair' column as index
+df.set_index("Pair", inplace=True)
+
+# Define columns to include in the stacked bar plot
+columns_to_plot = [
+    "Inversions", "Translocations", "Insertions", "Deletions",
+    "Copygains", "Copylosses", "Highly_diverged", "SNPs"
+]
+
+# Plot stacked bar chart
+ax = df[columns_to_plot].plot(
+    kind='bar', 
+    stacked=True, 
+    figsize=(12, 6), 
+    colormap="tab20"
+)
+
+# Customize plot
+plt.title("Genomic Variation Events per Genome Pair")
+plt.ylabel("Count")
+plt.xlabel("Genome Pair")
+plt.xticks(rotation=45, ha='right')
+plt.tight_layout()
+
+# Save as PNG and PDF
+plt.savefig("genomic_variation_stacked_bar.png", dpi=300)
+plt.savefig("genomic_variation_stacked_bar.pdf")
+
+# Show plot
+plt.show()
+
+
+#####################################
+#Fig3f SV density across the genome
+#####################################
+#!/usr/bin/env python3
+
+import os
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
+from collections import defaultdict
+import pysam
+
+# -------- CONFIGURATION --------
+vcf_file = "svim_cutesv_results/merged_svs.vcf"
+output_prefix = "SV_density"
+window_size = 1_000_000  # 1 Mb
+chrom_order = [f"Chr{str(i).zfill(2)}" for i in range(1, 11)]
+# --------------------------------
+
+def get_chrom_lengths(vcf_path):
+    chrom_lengths = {}
+    with pysam.VariantFile(vcf_path) as vcf:
+        for contig in vcf.header.contigs:
+            chrom_lengths[contig] = vcf.header.contigs[contig].length
+    return {k: chrom_lengths[k] for k in chrom_order if k in chrom_lengths}
+
+def compute_sv_density(vcf_path, chrom_lengths, window_size):
+    sv_counts = defaultdict(lambda: defaultdict(int))
+    with pysam.VariantFile(vcf_path) as vcf:
+        for record in vcf.fetch():
+            chrom = record.contig
+            if chrom not in chrom_lengths:
+                continue
+            window = record.pos // window_size
+            sv_counts[chrom][window] += 1
+    return sv_counts
+
+def plot_sv_density_horizontal(chrom_lengths, sv_counts, output_prefix):
+    fig, ax = plt.subplots(figsize=(20, 5))  # Wide layout
+
+    cmap = plt.cm.viridis
+    vmax = max(count for chrom in sv_counts for count in sv_counts[chrom].values())
+    norm = mcolors.Normalize(vmin=0, vmax=vmax)
+
+    x_start = 0
+    xticks = []
+    xticklabels = []
+
+    for chrom in chrom_order:
+        length = chrom_lengths.get(chrom)
+        if not length:
+            continue
+        n_windows = (length + window_size - 1) // window_size
+        counts = [sv_counts[chrom].get(j, 0) for j in range(n_windows)]
+        x = [x_start + j for j in range(n_windows)]
+        y = counts
+
+        ax.bar(x, y, color=cmap(norm(y)), width=1.0, edgecolor='none')
+
+        # Add label at center of chromosome
+        xticks.append(x_start + n_windows // 2)
+        xticklabels.append(chrom)
+
+        x_start += n_windows + 5  # Add spacing between chromosomes
+
+    ax.set_xticks(xticks)
+    ax.set_xticklabels(xticklabels, rotation=45, fontsize=9)
+    ax.set_ylabel("SV Count per 1Mb bin")
+    ax.set_title("SV Density Across Chromosomes (1Mb window)", fontsize=12)
+
+    # Colorbar
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+    cbar = fig.colorbar(sm, ax=ax, orientation='vertical', pad=0.01)
+    cbar.set_label("SV Density")
+
+    plt.tight_layout()
+    plt.savefig(f"{output_prefix}.png", dpi=300)
+    plt.savefig(f"{output_prefix}.pdf")
+    plt.close()
+
+# Run
+if __name__ == "__main__":
+    if not os.path.exists(vcf_file):
+        raise FileNotFoundError(f"{vcf_file} not found")
+    chrom_lengths = get_chrom_lengths(vcf_file)
+    sv_counts = compute_sv_density(vcf_file, chrom_lengths, window_size)
+    plot_sv_density_horizontal(chrom_lengths, sv_counts, output_prefix)
+
+#####################################
+#Fig.3g-h graph
+#ColabFold v1.5.5: AlphaFold2 using MMseqs2
+#https://colab.research.google.com/drive/1Svk8CXKiYCVXiaVPQMzlFG7oJ_14uwHV
+#####################################
+#super graph -50: https://www.nature.com/articles/s41588-024-01715-9
+########################################################################################
+########################################################################################
+(base) [ jkitony@10.7.30.227:/data1/jkitony/Sorghum/graph_pangenome2025/fiftygenomes ]$
+
+#!/bin/bash
+# Define base S3 URL
+base_url="s3://salk-tm-dev/Sbic/pangenome_2024/assemblies"
+# List of sample directories to download from
+samples=(
+    "Wild_PI156549_HAP1"
+    "Wild_PI156549_HAP2"
+    "BTX623"
+    "RTx430"
+    "ExPVP_PI543243"
+    "ExPVP_PI543246"
+    "ExPVP_PI543247"
+    "ExPVP_PI544069"
+    "ExPVP_PI554646"
+    "ExPVP_PI554647"
+    "ExPVP_PI554648"
+    "ExPVP_PI554649"
+    "ExPVP_PI554650"
+    "ExPVP_PI554652"
+    "ExPVP_PI554654"
+    "ExPVP_PI555457"
+    "ExPVP_PI561926"
+    "ExPVP_PI562621"
+    "ExPVP_PI562622"
+    "ExPVP_PI562623"
+    "ExPVP_PI562624"
+    "ExPVP_PI562625"
+    "ExPVP_PI564085"
+    "ExPVP_PI574398"
+    "ExPVP_PI574406"
+    "ExPVP_PI574407"
+    "ExPVP_PI594354"
+    "ExPVP_PI594355"
+    "ExPVP_PI595221"
+    "ExPVP_PI596332"
+    "ExPVP_PI596567"
+    "ExPVP_PI601264"
+    "ExPVP_PI601415"
+    "ExPVP_PI601552"
+    "ExPVP_PI601553"
+    "ExPVP_PI601554"
+    "ExPVP_PI601555"
+    "ExPVP_PI601556"
+    "ExPVP_PI601557"
+    "ExPVP_PI601716"
+    "ExPVP_PI601717"
+    "ExPVP_PI601718"
+    "ExPVP_PI601719"
+    "ExPVP_PI601720"
+    "ExPVP_PI601721"
+    "ExPVP_PI601743"
+    "ExPVP_PI601744"
+    "ExPVP_PI601756"
+    "ExPVP_PI602599"
+    "ExPVP_PI602600"   
+)
+# Loop through samples and download
+for sample in "${samples[@]}"; do
+    # Find the appropriate version (a01, a02, etc.) dynamically
+    version=$(aws s3 ls "$base_url/$sample/annotations/" | grep "munged" | awk -F'.' '{print $2}' | head -n1)
+
+    if [[ -n "$version" ]]; then
+        aws s3 cp "$base_url/$sample/annotations/$sample.$version.munged/$sample.$version.softmasked.fasta.gz" .
+        
+        # Rename file
+        mv "$sample.$version.softmasked.fasta.gz" "$sample.fasta.gz"
+    else
+        echo "Warning: No version found for $sample, skipping..."
+    fi
+done
+
+############################
+#!/bin/bash
+# Create an output directory
+mkdir -p TenChrFastaCleaned
+
+# Loop through all FASTA files in the folder
+for file in *.fasta.gz; do
+    # Define output filename
+    output="TenChrFastaCleaned/${file%.fasta.gz}.fasta.gz"
+
+    # Process each file
+    gunzip -c "$file" | awk '
+    BEGIN { keep=0 }  # Initialize keep flag to 0
+    /^>/ {
+        keep=0;  # Reset keep flag for each new header
+        sub(/\.a[0-9]+/, "", $0);  # Remove .a01, .a02, etc.
+        sub(/_RagTag/, "", $0);    # Remove _RagTag if present
+        if ($0 ~ /Chr/) {
+            if (!(seen[$0]++)) {  # Print only if the header is not seen before
+                print $0;
+                keep=1;
+            }
+        }
+    }
+    !/^>/ && keep { print }  # Print sequence lines only if keep flag is set
+    ' | gzip > "$output"
+
+    echo "Processed: $file -> $output"
+done
+
+#######################################################################
+#######################################################################
+#######################################################################
+cd TenChrFastaCleaned
+conda activate pggb_env
+#subset into chromosomes 
+#!/bin/bash
+# Loop through all .fasta.gz files in the directory
+for file in *.fasta.gz; do
+    # Create an output file name with "_Chr01" suffix and keep .fasta.gz extension
+    output_file="${file%.fasta.gz}_Chr01.fasta.gz"
+
+    # Use seqtk to extract only the Chr01 sequence and save it in compressed format
+    echo "Chr01" | seqtk subseq "$file" - | gzip > "$output_file"
+
+    echo "Processed $file -> $output_file"
+done
+
+
+#upload to for S3 graphing chr by chr
+aws s3 cp ./ s3://salk-tm-dev/Sbic/Graph2025_super50/ --recursive --exclude "*" --include "*_Chr01.fasta.gz"
+
+#create a new folder pggb there and upload nfConfig_RAM512GB.json
+ #aws s3 cp nfConfig_RAM512GB.json s3://salk-tm-dev/Sbic/Graph2025_super50/pggb/
+
+(snake) [ jkitony@10.7.30.227:/data1/jkitony/my_workflows/snake_pggb ]$
+
+# Define file list - samples formatted for PGGB
+fList=Wild_PI156549_HAP1_Chr01.fasta.gz,Wild_PI156549_HAP2_Chr01.fasta.gz,BTX623_Chr01.fasta.gz,RTx430_Chr01.fasta.gz,ExPVP_PI543243_Chr01.fasta.gz,ExPVP_PI543246_Chr01.fasta.gz,ExPVP_PI543247_Chr01.fasta.gz,ExPVP_PI544069_Chr01.fasta.gz,ExPVP_PI554646_Chr01.fasta.gz,ExPVP_PI554647_Chr01.fasta.gz,ExPVP_PI554648_Chr01.fasta.gz,ExPVP_PI554649_Chr01.fasta.gz,ExPVP_PI554650_Chr01.fasta.gz,ExPVP_PI554652_Chr01.fasta.gz,ExPVP_PI554654_Chr01.fasta.gz,ExPVP_PI555457_Chr01.fasta.gz,ExPVP_PI561926_Chr01.fasta.gz,ExPVP_PI562621_Chr01.fasta.gz,ExPVP_PI562622_Chr01.fasta.gz,ExPVP_PI562623_Chr01.fasta.gz,ExPVP_PI562624_Chr01.fasta.gz,ExPVP_PI562625_Chr01.fasta.gz,ExPVP_PI564085_Chr01.fasta.gz,ExPVP_PI574398_Chr01.fasta.gz,ExPVP_PI574406_Chr01.fasta.gz,ExPVP_PI574407_Chr01.fasta.gz,ExPVP_PI594354_Chr01.fasta.gz,ExPVP_PI594355_Chr01.fasta.gz,ExPVP_PI595221_Chr01.fasta.gz,ExPVP_PI596332_Chr01.fasta.gz,ExPVP_PI596567_Chr01.fasta.gz,ExPVP_PI601264_Chr01.fasta.gz,ExPVP_PI601415_Chr01.fasta.gz,ExPVP_PI601552_Chr01.fasta.gz,ExPVP_PI601553_Chr01.fasta.gz,ExPVP_PI601554_Chr01.fasta.gz,ExPVP_PI601555_Chr01.fasta.gz,ExPVP_PI601556_Chr01.fasta.gz,ExPVP_PI601557_Chr01.fasta.gz,ExPVP_PI601716_Chr01.fasta.gz,ExPVP_PI601717_Chr01.fasta.gz,ExPVP_PI601718_Chr01.fasta.gz,ExPVP_PI601719_Chr01.fasta.gz,ExPVP_PI601720_Chr01.fasta.gz,ExPVP_PI601721_Chr01.fasta.gz,ExPVP_PI601743_Chr01.fasta.gz,ExPVP_PI601744_Chr01.fasta.gz,ExPVP_PI601756_Chr01.fasta.gz,ExPVP_PI602599_Chr01.fasta.gz,ExPVP_PI602600_Chr01.fasta.gz
+
+# Define prefix list
+pList="Wild_PI156549_HAP1,Wild_PI156549_HAP2,BTX623,RTx430,ExPVP_PI543243,ExPVP_PI543246,ExPVP_PI543247,ExPVP_PI544069,ExPVP_PI554646,ExPVP_PI554647,ExPVP_PI554648,ExPVP_PI554649,ExPVP_PI554650,ExPVP_PI554652,ExPVP_PI554654,ExPVP_PI555457,ExPVP_PI561926,ExPVP_PI562621,ExPVP_PI562622,ExPVP_PI562623,ExPVP_PI562624,ExPVP_PI562625,ExPVP_PI564085,ExPVP_PI574398,ExPVP_PI574406,ExPVP_PI574407,ExPVP_PI594354,ExPVP_PI594355,ExPVP_PI595221,ExPVP_PI596332,ExPVP_PI596567,ExPVP_PI601264,ExPVP_PI601415,ExPVP_PI601552,ExPVP_PI601553,ExPVP_PI601554,ExPVP_PI601555,ExPVP_PI601556,ExPVP_PI601557,ExPVP_PI601716,ExPVP_PI601717,ExPVP_PI601718,ExPVP_PI601719,ExPVP_PI601720,ExPVP_PI601721,ExPVP_PI601743,ExPVP_PI601744,ExPVP_PI601756,ExPVP_PI602599,ExPVP_PI602600"
+
+
+
+##########################################
+#tibanna plot_metrics -j BoJtIgK9s9AJ ##3/15/2025, 3.40am done by 3/15/2025 6pm roughly..
+#tibanna log -j kZ43PXsdZ9ES
+https://salk-tm-logs.s3.amazonaws.com/mJq3FCduHyNq.metrics/metrics.html
+
+
+conda activate snake
+
+nohup snakemake -p --use-conda --use-singularity --tibanna -j 25 \
+--default-remote-prefix salk-tm-dev/Sbic/Graph2025_super50/ \
+--default-resources disk_mb=3000000 mem_mb=500000 \
+--tibanna-config root_ebs_size=32 log_bucket=salk-tm-logs \
+--config fastas=${fList} prefixes=${pList} \
+chromList=Chr01 \
+nHaplotypes=50 outdir=pggb/Sbic_Chr01_graph \
+pangenomeID=Sbic threadsForPGGB=64 \
+customNfConfig=pggb/nfConfig_RAM512GB.json -k >> logs/Sbic_Chr01_graph_50_3152025.log 2>&1 &
+
+#ran above with upgraded memory=500GB also remember to put fList and pList when --dryrun stored in Chr10_files_prefix.txt
+####################################################################################################################################
+#Visualize-IGV - 
+####################################################################################################################################
+#download odgi
+#/data1/jkitony/Sorghum/graph_pangenome2025_super50/
+aws s3 cp s3://salk-tm-dev/Sbic/Graph2025_super50/pggb/Sbic_Chr01_graph/Sbic.final.og .
+mv Sbic.final.og Sbic_pangenome_chr1_genos50.og
+
+#conda activate pggb_env
+#path names
+odgi paths -i Sbic_pangenome_chr1_genos50.og -L
+#BTX623_Chr01
+#Display graph stats= 50 PATHS
+odgi stats -i Sbic_pangenome_chr1_genos50.og -S | column -t 
+#length    nodes     edges     paths  steps
+175014044  10767598  15838484  50     341399686
+
+#Create bed for A6 protein Sobic.001G445700 1:76380926-76385283: EDIT A6_chr01_whole.bed
+########################################################################################
+#Generate a 1D visualization
+########################################################################################
+#Extract a sub-graph with the CSB gene: create bed file coordinates from gff3 file- whole gene -exon  by exon
+odgi extract -i Sbic_pangenome_chr1_genos50.og -o Sbic_pangenome_chr1_genos50_A6.og -b A6_chr01_whole.bed -c 0 -E --threads 32 -P
+odgi sort -i Sbic_pangenome_chr1_genos50_A6.og -o - -O | odgi viz -i - -o Sbic_pangenome_chr1_genos50_A6.png
+
+######################
+#Bandage
+######################
+odgi view -i Sbic_pangenome_chr1_genos50_A6.og -g > Sbic_pangenome_chr1_genos50_A6.gfa
+#load in the .gfa in  https://rrwick.github.io/Bandage/
+#download, install Windows version and view .gfa
+#C:\Sorghum\2025\PanSorghum
+#exon4 focus
+vg chunk -x Sbic_pangenome_chr1_genos50.gfa.vg.xg -p BTX623_Chr01:76384040-76384180 -O gfa -b BTX623_Chr01_A6_exon4 -c 0  > results.gfa
+vg view -F results.gfa > BTX623_Chr01_A6_exon4_simplified.gfa
+
+
+################################
+#sequencetubemap -A6 example
+#################################
+aws s3 cp s3://salk-tm-dev/Sbic/Graph2025_super50/pggb/Sbic_Chr01_graph/Sbic.final.gfa .
+mv Sbic.final.gfa Sbic_pangenome_chr1_genos50.gfa
+(pggb_env) [ jkitony@10.7.30.227:/data1/jkitony/Sorghum/graph_pangenome2025 ]$
+vg convert -g Sbic_pangenome_chr1_genos50.gfa > Sbic_pangenome_chr1_genos50.gfa.vg
+#index
+/data1/jkitony/Sorghum/graphs/cheza/sequenceTubeMap/scripts/prepare_vg.sh Sbic_pangenome_chr1_genos50.gfa.vg
+
+#extract exon 4 region :1:76384000-76384500
+/data1/jkitony/Sorghum/graphs/cheza/sequenceTubeMap/scripts/prepare_chunks.sh -x Sbic_pangenome_chr1_genos50.gfa.vg.xg -r BTX623_Chr01:76384000-76384500 -d A6_exon4 -o A6_chunk_exon4 >> A6_exon4.bed
+
+#move CSB_chunk_intron6 folder &  CSB_intron6.bed to local sequencetubemaps examples folder :C:\Sorghum\2025\PanSorghum\sequenceTubeMap\exampleData
+#(base) jkitony@jkitony:/mnt/c/Sorghum/2025/PanSorghum/sequenceTubeMap$
+#nvm use
+npm run serve
+http://localhost:3000/
+#Data/custom/CSB_intron6.bed/BTX623_Chr01:17127180-17133750/GO
+
+#####################################
+#Fig.3i samplot
+#####################################
+#samplot -A6 example
+/data1/jkitony/Sorghum/graph_pangenome2025_super50
+#################################
+#samplot interesting SV
+#############################################################################################################
+#############################################################################################################
+/data1/jkitony/Sorghum/graph_pangenome2025_super50
+#download bam files for plotting
+#wild and two ex-PVP examples
+aws s3 cp s3://salk-tm-raw/reads/Sbic_PI156549/Sbic_PI156549.pb_HiFi.R000-786.L005-388.bam .
+aws s3 cp s3://salk-tm-dev/Sbic/bams/SbicPI543243_PH256.bam .
+aws s3 cp s3://salk-tm-dev/Sbic/bams/SbicPI601557_PH310.bam .
+conda activate samplot
+#downgrade python to 3.10
+#AFTER modiying wild bam, check below
+
+samplot plot \
+  -n ExPVP_PI543243 ExPVP_PI601557 ExPVP_PI543246 Wild_PI156549 \
+  -b ExPVP_PI543243.bam ExPVP_PI601557.bam ExPVP_PI543246.bam Wild_PI156549.bam \
+  -c Chr01 \
+  -s 76384057 \
+  -e 76384162 \
+  -t DEL \
+  --width 10 \
+  --height 5 \
+  --dpi 300 \
+  -o ExPVP_A6_DEL_chr01_105bp.pdf
+
