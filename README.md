@@ -5,7 +5,7 @@ This repository contains all scripts and pipelines used in the manuscript titled
 Sorghum (Sorghum bicolor) is a climate-resilient cereal crop widely grown for grain, forage, and bioenergy. While the BTx623 reference genome has been foundational, it fails to capture the full extent of gene content and structural variation in elite breeding lines and their wild relatives.
 To address this, we constructed a long-read-based pangenome using 46 U.S. ex-Plant Variety Protected (ex-PVP) sorghum lines and 25 wild accessions, revealing gene presence–absence variation (PAV), structural variants (SVs), and selective sweeps linked to important agronomic traits.
 
-#Figures and Analyses
+# Figures and Analyses
 Figure 1: Assembly and Genome Architecture
 Genome size, gene counts, and contiguity metrics across accessions
 Distribution of transposable elements and repeat content
