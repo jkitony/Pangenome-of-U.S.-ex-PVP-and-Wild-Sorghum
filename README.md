@@ -31,5 +31,5 @@ Variation in copy number and methylation profiles for key candidate genes
 
 ## Data Access
 1. Raw sequencing reads: NCBI SRA PRJNA1283509
-2. Genome assemblies and annotations:
-   Salk Portal: https://resources.michael.salk.edu/ and FigShare: https://doi.org/10.6084/m9.figshare.29261795.v2 
+2. Genome assemblies and annotations: Portal: https://resources.michael.salk.edu/
+   and FigShare: https://doi.org/10.6084/m9.figshare.29261795.v2 
