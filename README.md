@@ -1,9 +1,9 @@
 # Pangenome-of-U.S.-ex-PVP-and-Wild-Sorghum
-This repository contains all scripts and pipelines used in the manuscript titled:
+This repository contains all scripts used in the manuscript titled:
 “Pangenome of U.S. ex-PVP and Wild Sorghum reveals structural variation and signatures of adaptation.”
 
 Sorghum (Sorghum bicolor) is a climate-resilient cereal crop widely grown for grain, forage, and bioenergy. While the BTx623 reference genome has been foundational, it fails to capture the full extent of gene content and structural variation in elite breeding lines and their wild relatives.
-To address this, we constructed a long-read-based pangenome using 46 U.S. ex-Plant Variety Protected (ex-PVP) sorghum lines and 25 wild accessions, revealing gene presence–absence variation (PAV), structural variants (SVs), and selective sweeps linked to important agronomic traits.
+To address this, we constructed a long-read-based pangenome using 46 U.S. ex-Plant Variety Protected (ex-PVP) sorghum lines and 25 wild accessions, revealing gene presence–absence variations (PAVs), structural variants (SVs), and selective sweeps linked to important agronomic traits.
 
 ## Figures and Analyses
 Figure 1: Assembly and Genome Architecture
@@ -33,4 +33,4 @@ Variation in copy number and methylation profiles for key candidate genes
 1. Raw sequencing reads: NCBI SRA PRJNA1283509
 2. Genome assemblies and annotations:
 https://resources.michael.salk.edu/ 
-https://figshare.com/s/02b42c7a3013946c1c17 
+https://doi.org/10.6084/m9.figshare.29261795.v2 
