@@ -2040,15 +2040,13 @@ plt.show()
 ##############################################################################################################
 ##############################################################################################################
 #PAV clock genes
-#original vs v2 differ in BTX623 AND RT430 were using JGI annotation which are off, so re-annotated using helixer to standardize things
 #MRTOM,DONUTS USING V2
 #s3://salk-tm-dev/Sbic/Orthofinder_exPVP_HPIv02/
 #Athaliana.Col0.fasta  Bnapus.Westar.fasta  Sbicolor.BTx623.fasta  Zmays.B73.fasta
-
-#upload to
+#upload to aws S3 bucket
 s3://salk-tm-dev/Sbic/pan_orthologs_2025v2/  
 
-
+#run orthofinder in AWS 
 nohup  snakemake -j 24 --use-conda --tibanna \
 --configfile configs/sbic_pan50_orthologsv3.json \
 --default-remote-prefix salk-tm-dev/Sbic/pan_orthologs_2025v2/ \
