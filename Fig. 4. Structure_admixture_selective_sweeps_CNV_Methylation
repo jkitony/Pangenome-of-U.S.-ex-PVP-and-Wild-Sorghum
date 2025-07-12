@@ -2035,6 +2035,126 @@ plt.tight_layout()
 plt.savefig("mate_gene_depth_boxplot_annotated.png", dpi=300)
 plt.savefig("mate_gene_depth_boxplot_annotated.pdf")
 plt.show()
+##############################################################################################################
+##############################################################################################################
+#PAV clock genes
+#original vs v2 differ in BTX623 AND RT430 were using JGI annotation which are off, so re-annotated using helixer to standardize things
+#MRTOM,DONUTS USING V2
+#V1 FOR CLOCK
+(base) [ jkitony@10.7.30.227:/data1/jkitony/Sorghum/Orthologs_GO_analysis_50/ORIGINAL_V1_JGI ]$
+aws s3 cp s3://salk-tm-dev/Sbic/pan_orthologs_2025/pan50_orthologs2025.orthofinder.tar.gz .
+tar -zxvf pan50_orthologs2025.orthofinder.tar.gz 
+
+###
+#TABLE
+import pandas as pd
+import re
+
+# Load the reference clock gene list (with BTX623 IDs)
+ref_df = pd.read_csv("Sobic_clock_genes.txt", sep="\t")  # Columns: ID, Name
+
+# Load OrthoFinder orthogroups
+og_df = pd.read_csv("Orthogroups.tsv", sep="\t")
+
+# Create a mapping of BTX623 gene ID → Orthogroup
+btog_map = {}  # Sobic.ID → OG
+for _, row in og_df.iterrows():
+    og = row["Orthogroup"]
+    if "BTX623" in row and pd.notna(row["BTX623"]):
+        btx_genes = [re.sub(r"\.\d+\.p$", "", g.strip()) for g in row["BTX623"].split(", ")]
+        for g in btx_genes:
+            btog_map[g] = og
+
+# Get list of accessions (columns except "Orthogroup")
+accessions = [col for col in og_df.columns if col != "Orthogroup"]
+
+# Create the output table
+summary = []
+
+for _, ref in ref_df.iterrows():
+    gene_id = ref["ID"]
+    gene_name = ref["Name"]
+    orthogroup = btog_map.get(gene_id, "NA")
+    row = {"ID": gene_id, "Name": gene_name, "Orthogroup": orthogroup}
+    
+    if orthogroup == "NA":
+        for acc in accessions:
+            row[acc] = 0
+    else:
+        og_row = og_df[og_df["Orthogroup"] == orthogroup].iloc[0]
+        for acc in accessions:
+            if pd.isna(og_row.get(acc)):
+                row[acc] = 0
+            else:
+                count = len(str(og_row[acc]).split(","))
+                row[acc] = count
+    summary.append(row)
+
+# Convert to DataFrame and save
+summary_df = pd.DataFrame(summary)
+summary_df.to_csv("clock_gene_pav_summary.tsv", sep="\t", index=False)
+
+print("✅ Summary saved as clock_gene_pav_summary.tsv")
+#HEATMAP
+
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+import numpy as np
+
+# Load the summary file
+df = pd.read_csv("clock_gene_pav_summary.tsv", sep="\t")
+
+# Set ID + Name as index (optional for display)
+df["Gene"] = df["Name"] + " (" + df["ID"] + ")"
+df = df.set_index("Gene")
+
+# Drop non-accession columns
+df = df.drop(columns=["ID", "Name", "Orthogroup"])
+
+# Convert counts to discrete groups
+def categorize(value):
+    if value == 0:
+        return 0
+    elif value == 1:
+        return 1
+    elif value == 2:
+        return 2
+    elif value == 3:
+        return 3
+    else:
+        return 4
+
+categorized_df = df.applymap(categorize)
+
+# Set color palette for 0–4+
+cmap = sns.color_palette(["white", "#c6dbef", "#6baed6", "#2171b5", "#08306b"])
+
+# Plot heatmap
+plt.figure(figsize=(14, 14))
+ax = sns.heatmap(
+    categorized_df,
+    cmap=cmap,
+    cbar_kws={"label": "Gene Copy Category (0, 1, 2, 3, 4+)"},
+    linewidths=0.5,
+    linecolor='gray',
+    square=False,
+    xticklabels=True,
+    yticklabels=True
+)
+
+plt.xticks(rotation=45, ha='right', fontsize=10)
+plt.yticks(fontsize=10)
+plt.title("Clock Gene PAV Heatmap Across Sorghum Accessions", fontsize=14, fontweight='bold')
+plt.tight_layout()
+
+# Save to files
+plt.savefig("clock_gene_pav_heatmap.pdf", dpi=300)
+plt.savefig("clock_gene_pav_heatmap.png", dpi=300)
+
+plt.show()
+
+
 
 ##############################################################################################################
 ##############################################################################################################
