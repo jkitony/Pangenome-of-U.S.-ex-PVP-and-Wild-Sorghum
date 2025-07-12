@@ -2037,21 +2037,39 @@ plt.savefig("mate_gene_depth_boxplot_annotated.pdf")
 plt.show()
 ##############################################################################################################
 ##############################################################################################################
+##############################################################################################################
+##############################################################################################################
 #PAV clock genes
 #original vs v2 differ in BTX623 AND RT430 were using JGI annotation which are off, so re-annotated using helixer to standardize things
 #MRTOM,DONUTS USING V2
-#V1 FOR CLOCK
-(base) [ jkitony@10.7.30.227:/data1/jkitony/Sorghum/Orthologs_GO_analysis_50/ORIGINAL_V1_JGI ]$
-aws s3 cp s3://salk-tm-dev/Sbic/pan_orthologs_2025/pan50_orthologs2025.orthofinder.tar.gz .
-tar -zxvf pan50_orthologs2025.orthofinder.tar.gz 
+#s3://salk-tm-dev/Sbic/Orthofinder_exPVP_HPIv02/
+#Athaliana.Col0.fasta  Bnapus.Westar.fasta  Sbicolor.BTx623.fasta  Zmays.B73.fasta
 
-###
+#upload to
+s3://salk-tm-dev/Sbic/pan_orthologs_2025v2/  
+
+
+nohup  snakemake -j 24 --use-conda --tibanna \
+--configfile configs/sbic_pan50_orthologsv3.json \
+--default-remote-prefix salk-tm-dev/Sbic/pan_orthologs_2025v2/ \
+--default-resources mem_mb=200000 disk_mb=1500000 \
+--tibanna-config root_ebs_size=32 log_bucket=salk-tm-logs run_name=sbic_pan50_orthologsv3 > logs/pan50_orthologs_7122025v3 2>&1 &
+#fI2lfp3Rua3a
+#original vs v2 differ in BTX623 AND RT430 were using JGI annotation which are off, so re-annotated using helixer to standardize things, v3 replaced with Athaliana,zmays etc
+
+#V3 FOR CLOCK
+(base) [ jkitony@10.7.30.227:/data1/jkitony/Sorghum/Orthologs_GO_analysis_50/CLOCK_GENES_V3 ]$
+aws s3 cp s3://salk-tm-dev/Sbic/pan_orthologs_2025v2/pan50_orthologs2025v3.orthofinder.tar.gz .
+tar -zxvf pan50_orthologs2025v3.orthofinder.tar.gz 
+
+######
 #TABLE
+######
 import pandas as pd
 import re
 
 # Load the reference clock gene list (with BTX623 IDs)
-ref_df = pd.read_csv("Sobic_clock_genes.txt", sep="\t")  # Columns: ID, Name
+ref_df = pd.read_csv("At_seed_clock_genes.txt", sep="\t")  # Columns: ID, Name
 
 # Load OrthoFinder orthogroups
 og_df = pd.read_csv("Orthogroups.tsv", sep="\t")
@@ -2095,7 +2113,9 @@ summary_df = pd.DataFrame(summary)
 summary_df.to_csv("clock_gene_pav_summary.tsv", sep="\t", index=False)
 
 print("✅ Summary saved as clock_gene_pav_summary.tsv")
+##############
 #HEATMAP
+##############
 
 import pandas as pd
 import seaborn as sns
@@ -2155,6 +2175,9 @@ plt.savefig("clock_gene_pav_heatmap.png", dpi=300)
 plt.show()
 
 
+
+##############################################################################################################
+##############################################################################################################
 
 ##############################################################################################################
 ##############################################################################################################
